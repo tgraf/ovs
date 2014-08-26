@@ -106,8 +106,9 @@ struct flow {
     union flow_in_port in_port; /* Input port.*/
     uint32_t recirc_id;         /* Must be exact match. */
     uint32_t conj_id;           /* Conjunction ID. */
+    uint8_t conn_state ;        /* Connection state. */
+    uint8_t pad1[5];            /* Pad to 48 bits. */
     ofp_port_t actset_output;   /* Output port in action set. */
-    uint8_t pad1[6];            /* Pad to 64 bits. */
 
     /* L2, Order the same as in the Ethernet header! (64-bit aligned) */
     uint8_t dl_dst[ETH_ADDR_LEN]; /* Ethernet destination address. */
@@ -191,6 +192,7 @@ struct flow_metadata {
     ovs_be64 metadata;               /* OpenFlow 1.1+ metadata field. */
     uint32_t regs[FLOW_N_REGS];      /* Registers. */
     uint32_t pkt_mark;               /* Packet mark. */
+    uint8_t conn_state;              /* Connection state. */
     ofp_port_t in_port;              /* OpenFlow port or zero. */
 };
 
@@ -757,6 +759,7 @@ pkt_metadata_from_flow(const struct flow *flow)
     md.skb_priority = flow->skb_priority;
     md.pkt_mark = flow->pkt_mark;
     md.in_port = flow->in_port;
+    md.conn_state = flow->conn_state;
 
     return md;
 }

@@ -89,6 +89,7 @@ struct dpif_backer_support {
     bool recirc;
     bool tnl_push_pop;
     bool ufid;
+    bool conn_state;
 };
 
 size_t ofproto_dpif_get_max_mpls_depth(const struct ofproto_dpif *);

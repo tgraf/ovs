@@ -284,6 +284,9 @@ enum ofp_raw_action_type {
 
     /* NX1.0+(34): struct nx_action_conjunction. */
     NXAST_RAW_CONJUNCTION,
+
+    /* NX1.0+(35): struct nx_action_conntrack. */
+    NXAST_RAW_CT,
 };
 
 /* OpenFlow actions are always a multiple of 8 bytes in length. */
@@ -4342,6 +4345,91 @@ format_SAMPLE(const struct ofpact_sample *a, struct ds *s)
                   a->obs_domain_id, a->obs_point_id);
 }
 
+/* Action structure for NXAST_CT.
+ *
+ * Pass traffic to the connection tracker.  If 'flags' is
+ * NX_CT_F_RECIRC, traffic is recirculated back to flow table
+ * with the NXM_NX_CONN_STATE and NXM_NX_CONN_STATE_W matches set.  A
+ * standard "resubmit" action is not sufficient, since connection
+ * tracking occurs outside of the classifier.  The 'zone' argument
+ * specifies a context within which the tracking is done. */
+struct nx_action_conntrack {
+    ovs_be16 type;              /* OFPAT_VENDOR. */
+    ovs_be16 len;               /* 16. */
+    ovs_be32 vendor;            /* NX_VENDOR_ID. */
+    ovs_be16 subtype;           /* NXAST_CT. */
+    ovs_be16 flags;             /* Zero or more NX_CT_F_* flags.
+                                 * Unspecified flag bits must be zero. */
+    ovs_be16 zone;              /* Connection tracking context. */
+    uint8_t  pad[2];
+};
+OFP_ASSERT(sizeof(struct nx_action_conntrack) == 16);
+
+static enum ofperr
+decode_NXAST_RAW_CT(const struct nx_action_conntrack *nac, struct ofpbuf *out)
+{
+    struct ofpact_conntrack *conntrack;
+
+    conntrack = ofpact_put_CT(out);
+    conntrack->flags = ntohs(nac->flags);
+    conntrack->zone = ntohs(nac->zone);
+
+    return 0;
+}
+
+static void
+encode_CT(const struct ofpact_conntrack *conntrack,
+          enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
+{
+    struct nx_action_conntrack *nac;
+
+    nac = put_NXAST_CT(out);
+    nac->flags = htons(conntrack->flags);
+    nac->zone = htons(conntrack->zone);
+}
+
+/* Parses 'arg' as the argument to a "ct" action, and appends such an
+ * action to 'ofpacts'.
+ *
+ * Returns NULL if successful, otherwise a malloc()'d string describing the
+ * error.  The caller is responsible for freeing the returned string. */
+static char * OVS_WARN_UNUSED_RESULT
+parse_CT(char *arg, struct ofpbuf *ofpacts,
+         enum ofputil_protocol *usable_protocols OVS_UNUSED)
+{
+    struct ofpact_conntrack *oc = ofpact_put_CT(ofpacts);
+    char *key, *value;
+
+    oc->flags = 0;
+    while (ofputil_parse_key_value(&arg, &key, &value)) {
+        char *error = NULL;
+
+        if (!strcmp(key, "commit")) {
+            oc->flags |= NX_CT_F_COMMIT;
+        } else if (!strcmp(key, "recirc")) {
+            oc->flags |= NX_CT_F_RECIRC;
+        } else if (!strcmp(key, "zone")) {
+            error = str_to_u16(value, "zone", &oc->zone);
+        } else {
+            error = xasprintf("invalid key \"%s\" in \"ct\" argument",
+                              key);
+        }
+        if (error) {
+            return error;
+        }
+    }
+    return NULL;
+}
+
+static void
+format_CT(const struct ofpact_conntrack *a, struct ds *s)
+{
+    ds_put_format(s, "ct(%s%szone=%"PRIu16")",
+                  a->flags & NX_CT_F_COMMIT ? "commit," : "",
+                  a->flags & NX_CT_F_RECIRC ? "recirc," : "",
+                  a->zone);
+}
+
 /* Meter instruction. */
 
 static void
@@ -4721,6 +4809,7 @@ ofpact_is_set_or_move_action(const struct ofpact *a)
         return true;
     case OFPACT_BUNDLE:
     case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_CT:
     case OFPACT_CONTROLLER:
     case OFPACT_DEC_MPLS_TTL:
     case OFPACT_DEC_TTL:
@@ -4793,6 +4882,7 @@ ofpact_is_allowed_in_actions_set(const struct ofpact *a)
      * in the action set is undefined. */
     case OFPACT_BUNDLE:
     case OFPACT_CONTROLLER:
+    case OFPACT_CT:
     case OFPACT_ENQUEUE:
     case OFPACT_EXIT:
     case OFPACT_FIN_TIMEOUT:
@@ -5018,6 +5108,7 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type)
     case OFPACT_NOTE:
     case OFPACT_EXIT:
     case OFPACT_SAMPLE:
+    case OFPACT_CT:
     default:
         return OVSINST_OFPIT11_APPLY_ACTIONS;
     }
@@ -5572,6 +5663,16 @@ ofpact_check__(enum ofputil_protocol *usable_protocols, struct ofpact *a,
     case OFPACT_SAMPLE:
         return 0;
 
+    case OFPACT_CT: {
+        struct ofpact_conntrack *oc = ofpact_get_CT(a);
+
+        if (!dl_type_is_ip_any(flow->dl_type)
+            || (flow->conn_state & CS_INVALID && oc->flags & NX_CT_F_COMMIT)) {
+            inconsistent_match(usable_protocols);
+        }
+        return 0;
+    }
+
     case OFPACT_CLEAR_ACTIONS:
         return 0;
 
@@ -6006,6 +6107,7 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_GOTO_TABLE:
     case OFPACT_METER:
     case OFPACT_GROUP:
+    case OFPACT_CT:
     default:
         return false;
     }

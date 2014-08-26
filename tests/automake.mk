@@ -300,6 +300,7 @@ tests_test_type_props_SOURCES = tests/test-type-props.c
 # Python tests.
 CHECK_PYFILES = \
 	tests/appctl.py \
+	tests/test-conntrack.py \
 	tests/test-daemon.py \
 	tests/test-json.py \
 	tests/test-jsonrpc.py \

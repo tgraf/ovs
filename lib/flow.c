@@ -178,6 +178,24 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
     }                                                                   \
 }
 
+/* Are there any other asserts we need for pushing one octet? */
+#define miniflow_push_uint8_(MF, OFS, VALUE)                            \
+{                                                                       \
+    MINIFLOW_ASSERT(MF.data < MF.end &&                                 \
+                    ((OFS) % 8 != 0                                     \
+                     || !(MF.map & (UINT64_MAX << (OFS) / 8))))         \
+                                                                        \
+    if ((OFS) % 8 == 0) {                                               \
+        *(uint8_t *)MF.data = VALUE;                                    \
+        MF.map |= UINT64_C(1) << (OFS) / 8;                             \
+    } else if ((OFS) % 8 < 7) {                                         \
+        *((uint8_t *)MF.data + (OFS % 8)) = VALUE;                      \
+    } else {                                                            \
+        *((uint8_t *)MF.data + 7) = VALUE;                              \
+        MF.data++;                                                      \
+    }                                                                   \
+}
+
 #define miniflow_pad_to_64_(MF, OFS)                                    \
 {                                                                   \
     MINIFLOW_ASSERT((OFS) % 8 != 0);                                    \
@@ -246,6 +264,9 @@ BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
 
 #define miniflow_push_be16(MF, FIELD, VALUE)                        \
     miniflow_push_be16_(MF, offsetof(struct flow, FIELD), VALUE)
+
+#define miniflow_push_uint8(MF, FIELD, VALUE)                      \
+    miniflow_push_uint8_(MF, offsetof(struct flow, FIELD), VALUE)
 
 #define miniflow_pad_to_64(MF, FIELD)                       \
     miniflow_pad_to_64_(MF, offsetof(struct flow, FIELD))
@@ -447,6 +468,11 @@ miniflow_extract(struct ofpbuf *packet, const struct pkt_metadata *md,
         if (md->recirc_id) {
             miniflow_push_uint32(mf, recirc_id, md->recirc_id);
             miniflow_pad_to_64(mf, conj_id);
+        }
+
+        if (md->conn_state) {
+            miniflow_push_uint8(mf, conn_state, md->conn_state);
+            miniflow_pad_to_64(mf, pad1);
         }
     }
 
@@ -777,6 +803,7 @@ flow_get_metadata(const struct flow *flow, struct flow_metadata *fmd)
     fmd->metadata = flow->metadata;
     memcpy(fmd->regs, flow->regs, sizeof fmd->regs);
     fmd->pkt_mark = flow->pkt_mark;
+    fmd->conn_state = flow->conn_state;
     fmd->in_port = flow->in_port.ofp_port;
 }
 
@@ -875,6 +902,9 @@ flow_format(struct ds *ds, const struct flow *flow)
     if (!flow->recirc_id) {
         WC_UNMASK_FIELD(wc, recirc_id);
     }
+    if (!flow->conn_state) {
+        WC_UNMASK_FIELD(wc, conn_state);
+    }
     for (int i = 0; i < FLOW_N_REGS; i++) {
         if (!flow->regs[i]) {
             WC_UNMASK_FIELD(wc, regs[i]);
@@ -937,6 +967,7 @@ void flow_wildcards_init_for_packet(struct flow_wildcards *wc,
 
     WC_MASK_FIELD(wc, skb_priority);
     WC_MASK_FIELD(wc, pkt_mark);
+    WC_MASK_FIELD(wc, conn_state);
     WC_MASK_FIELD(wc, recirc_id);
     WC_MASK_FIELD(wc, dp_hash);
     WC_MASK_FIELD(wc, in_port);
@@ -1020,7 +1051,7 @@ flow_wc_map(const struct flow *flow)
     /* Metadata fields that can appear on packet input. */
     map |= MINIFLOW_MAP(skb_priority) | MINIFLOW_MAP(pkt_mark)
         | MINIFLOW_MAP(recirc_id) | MINIFLOW_MAP(dp_hash)
-        | MINIFLOW_MAP(in_port)
+        | MINIFLOW_MAP(conn_state) | MINIFLOW_MAP(in_port)
         | MINIFLOW_MAP(dl_dst) | MINIFLOW_MAP(dl_src)
         | MINIFLOW_MAP(dl_type) | MINIFLOW_MAP(vlan_tci);
 

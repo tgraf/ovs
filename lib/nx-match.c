@@ -949,6 +949,12 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
     nxm_put_32m(b, MFF_PKT_MARK, oxm, htonl(flow->pkt_mark),
                 htonl(match->wc.masks.pkt_mark));
 
+    /* Connection tracking. */
+    if (match->wc.masks.conn_state) {
+        nxm_put_8m(b, MFF_CONN_STATE, oxm, flow->conn_state,
+                   match->wc.masks.conn_state);
+    }
+
     /* OpenFlow 1.1+ Metadata. */
     nxm_put_64m(b, MFF_METADATA, oxm,
                 flow->metadata, match->wc.masks.metadata);
