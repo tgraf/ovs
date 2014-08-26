@@ -44,6 +44,7 @@
 #include <net/ipv6.h>
 #include <net/mpls.h>
 #include <net/ndisc.h>
+#include <linux/netfilter/nf_conntrack_common.h>
 
 #include "datapath.h"
 #include "flow.h"
@@ -682,6 +683,29 @@ int ovs_flow_key_update(struct sk_buff *skb, struct sw_flow_key *key)
 	return key_extract(skb, key);
 }
 
+/* Map SKB connection state into the values used by flow definition. */
+u8 ovs_map_nfctinfo(struct sk_buff *skb)
+{
+	if (!skb->nfct)
+		return 0;
+
+	/* xxx This should use #defines from 'lib/packets.h' instead of numbers. */
+	if (skb->nfctinfo == IP_CT_ESTABLISHED)
+		return 0x82;
+	else if (skb->nfctinfo == IP_CT_RELATED)
+		return 0x84;
+	else if (skb->nfctinfo == IP_CT_NEW)
+		return 0x81;
+	else if (skb->nfctinfo == IP_CT_ESTABLISHED_REPLY)
+		return 0xc2;
+	else if (skb->nfctinfo == IP_CT_RELATED_REPLY)
+		return 0xc4;
+	else if (skb->nfctinfo == IP_CT_NEW_REPLY)
+		return 0xc1;
+	else
+		return 0x80;
+}
+
 int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 			 struct sk_buff *skb, struct sw_flow_key *key)
 {
@@ -707,6 +731,8 @@ int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 	key->phy.priority = skb->priority;
 	key->phy.in_port = OVS_CB(skb)->input_vport->port_no;
 	key->phy.skb_mark = skb->mark;
+//	key->phy.conn_state = ovs_map_nfctinfo(skb);
+	key->phy.conn_state = 0;
 	key->ovs_flow_hash = 0;
 	key->recirc_id = 0;
 

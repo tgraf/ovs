@@ -1132,6 +1132,7 @@ dpif_execute_helper_cb(void *aux_, struct dpif_packet **packets, int cnt,
     case OVS_ACTION_ATTR_SET_MASKED:
     case OVS_ACTION_ATTR_SAMPLE:
     case OVS_ACTION_ATTR_UNSPEC:
+    case OVS_ACTION_ATTR_CT:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
     }

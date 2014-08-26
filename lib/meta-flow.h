@@ -500,6 +500,30 @@ enum OVS_PACKED_ENUM mf_field_id {
      */
     MFF_PKT_MARK,
 
+    /* "conn_state".
+     *
+     * Connection tracking state.  The field is populated by the
+     * NXAST_CT action.  The following flags are defined:
+     *
+     *   - CONN_STATE_TRACKED (0x80): Connection tracking has occurred.
+     *   - CONN_STATE_REPLY (0x40): This flow did not initiate the connection.
+     *
+     * The following values describe the state of the connection:
+     *
+     *   - New (0x01): This is the beginning of a new connection.
+     *   - Established (0x02): This is part of an already existing connection.
+     *   - Related (0x04): This is a new connection that is "expected".
+     *
+     * Type: u8.
+     * Maskable: bitwise.
+     * Formatting: conn state.
+     * Prerequisites: none.
+     * Access: read-only.
+     * NXM: NXM_NX_CONN_STATE(37) since v2.4.
+     * OXM: none.
+     */
+    MFF_CONN_STATE,
+
 #if FLOW_N_REGS == 8
     /* "reg<N>".
      *
@@ -1440,6 +1464,7 @@ enum OVS_PACKED_ENUM mf_string {
     MFS_HEXADECIMAL,
 
     /* Other formats. */
+    MFS_CONN_STATE,             /* Conn* state */
     MFS_ETHERNET,
     MFS_IPV4,
     MFS_IPV6,

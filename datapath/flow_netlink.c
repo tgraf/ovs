@@ -270,7 +270,7 @@ size_t ovs_key_attr_size(void)
 	/* Whenever adding new OVS_KEY_ FIELDS, we should consider
 	 * updating this function.
 	 */
-	BUILD_BUG_ON(OVS_KEY_ATTR_TUNNEL_INFO != 22);
+	BUILD_BUG_ON(OVS_KEY_ATTR_TUNNEL_INFO != 23);
 
 	return    nla_total_size(4)   /* OVS_KEY_ATTR_PRIORITY */
 		+ nla_total_size(0)   /* OVS_KEY_ATTR_TUNNEL */
@@ -279,6 +279,7 @@ size_t ovs_key_attr_size(void)
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_SKB_MARK */
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_DP_HASH */
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_RECIRC_ID */
+		+ nla_total_size(1)   /* OVS_KEY_ATTR_CONN_STATE */
 		+ nla_total_size(12)  /* OVS_KEY_ATTR_ETHERNET */
 		+ nla_total_size(2)   /* OVS_KEY_ATTR_ETHERTYPE */
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_VLAN */
@@ -295,6 +296,7 @@ static const int ovs_key_lens[OVS_KEY_ATTR_MAX + 1] = {
 	[OVS_KEY_ATTR_PRIORITY] = sizeof(u32),
 	[OVS_KEY_ATTR_IN_PORT] = sizeof(u32),
 	[OVS_KEY_ATTR_SKB_MARK] = sizeof(u32),
+	[OVS_KEY_ATTR_CONN_STATE] = sizeof(u8),
 	[OVS_KEY_ATTR_ETHERNET] = sizeof(struct ovs_key_ethernet),
 	[OVS_KEY_ATTR_VLAN] = sizeof(__be16),
 	[OVS_KEY_ATTR_ETHERTYPE] = sizeof(__be16),
@@ -678,6 +680,13 @@ static int metadata_from_nlattrs(struct sw_flow_match *match,  u64 *attrs,
 					 is_mask, log))
 			return -EINVAL;
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_TUNNEL);
+	}
+
+	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_STATE)) {
+		uint8_t conn_state = nla_get_u8(a[OVS_KEY_ATTR_CONN_STATE]);
+
+		SW_FLOW_KEY_PUT(match, phy.conn_state, conn_state, is_mask);
+		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_STATE);
 	}
 	return 0;
 }
@@ -1174,6 +1183,9 @@ int ovs_nla_put_flow(const struct sw_flow_key *swkey,
 	if (nla_put_u32(skb, OVS_KEY_ATTR_SKB_MARK, output->phy.skb_mark))
 		goto nla_put_failure;
 
+	if (nla_put_u8(skb, OVS_KEY_ATTR_CONN_STATE, output->phy.conn_state))
+		goto nla_put_failure;
+
 	nla = nla_reserve(skb, OVS_KEY_ATTR_ETHERNET, sizeof(*eth_key));
 	if (!nla)
 		goto nla_put_failure;
@@ -1370,6 +1382,24 @@ static void rcu_free_acts_callback(struct rcu_head *rcu)
 {
 	struct sw_flow_actions *sf_acts = container_of(rcu,
 			struct sw_flow_actions, rcu);
+
+	if (sf_acts) {
+		struct ovs_conntrack_info *ct_info;
+		struct nlattr *a;
+		int rem, len = sf_acts->actions_len;
+
+		for (a = sf_acts->actions, rem = len; rem > 0;
+				a = nla_next(a, &rem)) {
+			switch (nla_type(a)) {
+				case OVS_ACTION_ATTR_CT:
+					ct_info = nla_data(a);
+					if (ct_info->ct)
+						nf_ct_put(ct_info->ct);
+					break;
+			}
+		}
+	}
+
 	kfree(sf_acts);
 }
 
@@ -1469,12 +1499,78 @@ static inline void add_nested_action_end(struct sw_flow_actions *sfa,
 	a->nla_len = sfa->actions_len - st_offset;
 }
 
-static int __ovs_nla_copy_actions(const struct nlattr *attr,
+static int __ovs_nla_copy_actions(struct net *net, const struct nlattr *attr,
 				  const struct sw_flow_key *key,
 				  int depth, struct sw_flow_actions **sfa,
 				  __be16 eth_type, __be16 vlan_tci, bool log);
 
-static int validate_and_copy_sample(const struct nlattr *attr,
+static int validate_and_copy_conntrack(struct net *net,
+				       const struct nlattr *attr,
+				       const struct sw_flow_key *key,
+				       struct sw_flow_actions **sfa,
+				       bool log)
+{
+	struct ovs_conntrack_info ct_info;
+	struct nf_conntrack_tuple t;
+	struct nlattr *a;
+	int rem;
+
+	memset(&ct_info, 0, sizeof(ct_info));
+
+	nla_for_each_nested(a, attr, rem) {
+		int type = nla_type(a);
+		static const u32 ovs_ct_attr_lens[OVS_CT_ATTR_MAX + 1] = {
+			[OVS_CT_ATTR_FLAGS] = sizeof(u32),
+			[OVS_CT_ATTR_ZONE] = sizeof(u16),
+		};
+
+		if (type > OVS_CT_ATTR_MAX) {
+			OVS_NLERR(log,
+				  "Unknown conntrack attribute (type=%d, max=%d).\n",
+				  type, OVS_CT_ATTR_MAX);
+			return -EINVAL;
+		}
+
+		if (ovs_ct_attr_lens[type] != nla_len(a) &&
+				ovs_ct_attr_lens[type] != -1) {
+			OVS_NLERR(log,
+				  "Conntrack attribute type has unexpected length (type=%d, length=%d, expected=%d).\n",
+				  type, nla_len(a), ovs_ct_attr_lens[type]);
+			return -EINVAL;
+		}
+
+		switch (type) {
+			case OVS_CT_ATTR_ZONE:
+				memset(&t, 0, sizeof(t));
+				ct_info.zone = nla_get_u16(a);
+				ct_info.ct = nf_conntrack_alloc(net,
+						ct_info.zone, &t, &t,
+						GFP_KERNEL);
+				if (!ct_info.ct)
+					return -ENOMEM;
+
+				nf_conntrack_tmpl_insert(net, ct_info.ct);
+				break;
+			case OVS_CT_ATTR_FLAGS:
+				ct_info.flags = nla_get_u32(a);
+				break;
+			default:
+				OVS_NLERR(log, "Unknown conntrack attribute (%d).\n",
+					  type);
+				return -EINVAL;
+		}
+	}
+
+	if (rem > 0) {
+		OVS_NLERR(log, "Conntrack attribute has %d unknown bytes.\n", rem);
+		return -EINVAL;
+	}
+
+	return add_action(sfa, OVS_ACTION_ATTR_CT, &ct_info,
+			  sizeof(ct_info), log);
+}
+
+static int validate_and_copy_sample(struct net *net, const struct nlattr *attr,
 				    const struct sw_flow_key *key, int depth,
 				    struct sw_flow_actions **sfa,
 				    __be16 eth_type, __be16 vlan_tci, bool log)
@@ -1514,7 +1610,7 @@ static int validate_and_copy_sample(const struct nlattr *attr,
 	if (st_acts < 0)
 		return st_acts;
 
-	err = __ovs_nla_copy_actions(actions, key, depth + 1, sfa,
+	err = __ovs_nla_copy_actions(net, actions, key, depth + 1, sfa,
 				     eth_type, vlan_tci, log);
 	if (err)
 		return err;
@@ -1644,6 +1740,7 @@ static int validate_set(const struct nlattr *a,
 
 	case OVS_KEY_ATTR_PRIORITY:
 	case OVS_KEY_ATTR_SKB_MARK:
+	case OVS_KEY_ATTR_CONN_STATE:
 	case OVS_KEY_ATTR_ETHERNET:
 		break;
 
@@ -1758,7 +1855,7 @@ static int copy_action(const struct nlattr *from,
 	return 0;
 }
 
-static int __ovs_nla_copy_actions(const struct nlattr *attr,
+static int __ovs_nla_copy_actions(struct net *net, const struct nlattr *attr,
 				  const struct sw_flow_key *key,
 				  int depth, struct sw_flow_actions **sfa,
 				  __be16 eth_type, __be16 vlan_tci, bool log)
@@ -1781,7 +1878,8 @@ static int __ovs_nla_copy_actions(const struct nlattr *attr,
 			[OVS_ACTION_ATTR_POP_VLAN] = 0,
 			[OVS_ACTION_ATTR_SET] = (u32)-1,
 			[OVS_ACTION_ATTR_SAMPLE] = (u32)-1,
-			[OVS_ACTION_ATTR_HASH] = sizeof(struct ovs_action_hash)
+			[OVS_ACTION_ATTR_HASH] = sizeof(struct ovs_action_hash),
+			[OVS_ACTION_ATTR_CT] = (u32)-1,
 		};
 		const struct ovs_action_push_vlan *vlan;
 		int type = nla_type(a);
@@ -1883,11 +1981,18 @@ static int __ovs_nla_copy_actions(const struct nlattr *attr,
 			break;
 
 		case OVS_ACTION_ATTR_SAMPLE:
-			err = validate_and_copy_sample(a, key, depth, sfa,
+			err = validate_and_copy_sample(net, a, key, depth, sfa,
 						       eth_type, vlan_tci, log);
 			if (err)
 				return err;
 			skip_copy = true;
+			break;
+
+		case OVS_ACTION_ATTR_CT:
+			err = validate_and_copy_conntrack(net, a, key, sfa, log);
+			if (err)
+				return err;
+			skip_copy =true;
 			break;
 
 		default:
@@ -1907,7 +2012,7 @@ static int __ovs_nla_copy_actions(const struct nlattr *attr,
 	return 0;
 }
 
-int ovs_nla_copy_actions(const struct nlattr *attr,
+int ovs_nla_copy_actions(struct net *net, const struct nlattr *attr,
 			 const struct sw_flow_key *key,
 			 struct sw_flow_actions **sfa, bool log)
 {
@@ -1917,7 +2022,7 @@ int ovs_nla_copy_actions(const struct nlattr *attr,
 	if (IS_ERR(*sfa))
 		return PTR_ERR(*sfa);
 
-	err = __ovs_nla_copy_actions(attr, key, 0, sfa, key->eth.type,
+	err = __ovs_nla_copy_actions(net, attr, key, 0, sfa, key->eth.type,
 				     key->eth.tci, log);
 	if (err)
 		kfree(*sfa);
@@ -1994,6 +2099,29 @@ static int set_action_to_attr(const struct nlattr *a, struct sk_buff *skb)
 	return 0;
 }
 
+static int conntrack_action_to_attr(const struct nlattr *attr,
+				    struct sk_buff *skb)
+{
+	struct ovs_conntrack_info *info;
+	struct nlattr *start;
+
+	start = nla_nest_start(skb, OVS_ACTION_ATTR_CT);
+	if (!start)
+		return -EMSGSIZE;
+
+	info = nla_data(attr);
+
+	if (nla_put_u32(skb, OVS_CT_ATTR_FLAGS, info->flags))
+		return -EMSGSIZE;
+
+	if (nla_put_u16(skb, OVS_CT_ATTR_ZONE, info->zone))
+		return -EMSGSIZE;
+
+	nla_nest_end(skb, start);
+
+	return 0;
+}
+
 int ovs_nla_put_actions(const struct nlattr *attr, int len, struct sk_buff *skb)
 {
 	const struct nlattr *a;
@@ -2003,21 +2131,28 @@ int ovs_nla_put_actions(const struct nlattr *attr, int len, struct sk_buff *skb)
 		int type = nla_type(a);
 
 		switch (type) {
-		case OVS_ACTION_ATTR_SET:
-			err = set_action_to_attr(a, skb);
-			if (err)
-				return err;
-			break;
+			case OVS_ACTION_ATTR_SET:
+				err = set_action_to_attr(a, skb);
+				if (err)
+					return err;
+				break;
 
-		case OVS_ACTION_ATTR_SAMPLE:
-			err = sample_action_to_attr(a, skb);
-			if (err)
-				return err;
-			break;
-		default:
-			if (nla_put(skb, type, nla_len(a), nla_data(a)))
-				return -EMSGSIZE;
-			break;
+			case OVS_ACTION_ATTR_SAMPLE:
+				err = sample_action_to_attr(a, skb);
+				if (err)
+					return err;
+				break;
+
+			case OVS_ACTION_ATTR_CT:
+				err = conntrack_action_to_attr(a, skb);
+				if (err)
+					return err;
+				break;
+
+			default:
+				if (nla_put(skb, type, nla_len(a), nla_data(a)))
+					return -EMSGSIZE;
+				break;
 		}
 	}
 

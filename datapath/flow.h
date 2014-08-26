@@ -32,6 +32,8 @@
 #include <linux/time.h>
 #include <linux/flex_array.h>
 #include <net/inet_ecn.h>
+#include <net/ip_tunnels.h>
+#include <net/netfilter/nf_conntrack.h>
 
 struct sk_buff;
 
@@ -127,6 +129,7 @@ struct sw_flow_key {
 		u32	priority;	/* Packet QoS priority. */
 		u32	skb_mark;	/* SKB mark. */
 		u16	in_port;	/* Input switch port (or DP_MAX_PORTS). */
+		u8  conn_state;	/* Connection state. */
 	} __packed phy; /* Safe when right after 'tun_key'. */
 	u32 ovs_flow_hash;		/* Datapath computed hash value.  */
 	u32 recirc_id;			/* Recirculation ID.  */
@@ -242,6 +245,12 @@ struct arp_eth_header {
 	unsigned char       ar_tip[4];		/* target IP address        */
 } __packed;
 
+struct ovs_conntrack_info {
+	u32 flags;
+	u16 zone;
+	struct nf_conn *ct;
+};
+
 void ovs_flow_stats_update(struct sw_flow *, __be16 tcp_flags,
 			   const struct sk_buff *);
 void ovs_flow_stats_get(const struct sw_flow *, struct ovs_flow_stats *,
@@ -251,6 +260,9 @@ u64 ovs_flow_used_time(unsigned long flow_jiffies);
 
 /* Update the non-metadata part of the flow key using skb. */
 int ovs_flow_key_update(struct sk_buff *skb, struct sw_flow_key *key);
+
+u8 ovs_map_nfctinfo(struct sk_buff *skb);
+
 int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 			 struct sk_buff *skb,
 			 struct sw_flow_key *key);

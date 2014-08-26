@@ -141,6 +141,10 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
         ds_put_format(string, " pkt_mark=0x%"PRIx32, pin.fmd.pkt_mark);
     }
 
+    if (pin.fmd.conn_state != 0) {
+        ds_put_format(string, " conn_state=0x%"PRIx8, pin.fmd.conn_state);
+    }
+
     ds_put_format(string, " (via %s)",
                   ofputil_packet_in_reason_to_string(pin.reason, reasonbuf,
                                                      sizeof reasonbuf));

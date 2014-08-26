@@ -88,6 +88,7 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_SET: return -2;
     case OVS_ACTION_ATTR_SET_MASKED: return -2;
     case OVS_ACTION_ATTR_SAMPLE: return -2;
+    case OVS_ACTION_ATTR_CT: return -2;
 
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -109,6 +110,7 @@ ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
     case OVS_KEY_ATTR_ENCAP: return "encap";
     case OVS_KEY_ATTR_PRIORITY: return "skb_priority";
     case OVS_KEY_ATTR_SKB_MARK: return "skb_mark";
+    case OVS_KEY_ATTR_CONN_STATE: return "conn_state";
     case OVS_KEY_ATTR_TUNNEL: return "tunnel";
     case OVS_KEY_ATTR_IN_PORT: return "in_port";
     case OVS_KEY_ATTR_ETHERNET: return "eth";
@@ -594,6 +596,28 @@ format_odp_tnl_push_action(struct ds *ds, const struct nlattr *attr)
 }
 
 static void
+format_odp_conntrack_action(struct ds *ds, const struct nlattr *attr)
+{
+    static const struct nl_policy ovs_conntrack_policy[] = {
+        [OVS_CT_ATTR_FLAGS] = { .type = NL_A_U32 },
+        [OVS_CT_ATTR_ZONE] = { .type = NL_A_U16 },
+    };
+    struct nlattr *a[ARRAY_SIZE(ovs_conntrack_policy)];
+    uint32_t flags;
+
+    if (!nl_parse_nested(attr, ovs_conntrack_policy, a, ARRAY_SIZE(a))) {
+        ds_put_cstr(ds, "ct(error)");
+        return;
+    }
+
+    flags = nl_attr_get_u32(a[OVS_CT_ATTR_FLAGS]);
+
+    ds_put_format(ds, "ct(%szone=%"PRIu16")",
+                  flags & OVS_CT_F_COMMIT ? "commit," : "",
+                  nl_attr_get_u16(a[OVS_CT_ATTR_ZONE]));
+}
+
+static void
 format_odp_action(struct ds *ds, const struct nlattr *a)
 {
     int expected_len;
@@ -681,6 +705,9 @@ format_odp_action(struct ds *ds, const struct nlattr *a)
     }
     case OVS_ACTION_ATTR_SAMPLE:
         format_odp_sample_action(ds, a);
+        break;
+    case OVS_ACTION_ATTR_CT:
+        format_odp_conntrack_action(ds, a);
         break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -1125,6 +1152,24 @@ parse_odp_action(const char *s, const struct simap *port_names,
     }
 
     {
+        uint32_t flags = 0;
+        int zone;
+        int n = -1;
+
+        if (ovs_scan(s, "ct(recirc,zone=%i)%n", &zone, &n)) {
+            flags |= OVS_CT_F_COMMIT;
+            nl_msg_put_u32(actions, OVS_ACTION_ATTR_CT, flags);
+            nl_msg_put_u16(actions, OVS_ACTION_ATTR_CT, zone);
+            return n;
+        }
+        if (ovs_scan(s, "ct(zone=%i)%n", &zone, &n)) {
+            nl_msg_put_u32(actions, OVS_ACTION_ATTR_CT, flags);
+            nl_msg_put_u16(actions, OVS_ACTION_ATTR_CT, zone);
+            return n;
+        }
+    }
+
+    {
         struct ovs_action_push_tnl data;
         int n;
 
@@ -1136,6 +1181,7 @@ parse_odp_action(const char *s, const struct simap *port_names,
             return n;
         }
     }
+
     return -EINVAL;
 }
 
@@ -1190,6 +1236,7 @@ odp_flow_key_attr_len(uint16_t type)
     case OVS_KEY_ATTR_SKB_MARK: return 4;
     case OVS_KEY_ATTR_DP_HASH: return 4;
     case OVS_KEY_ATTR_RECIRC_ID: return 4;
+    case OVS_KEY_ATTR_CONN_STATE: return 1;
     case OVS_KEY_ATTR_TUNNEL: return -2;
     case OVS_KEY_ATTR_IN_PORT: return 4;
     case OVS_KEY_ATTR_ETHERNET: return sizeof(struct ovs_key_ethernet);
@@ -1779,6 +1826,16 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
         }
         break;
 
+    case OVS_KEY_ATTR_CONN_STATE:
+        if (!is_exact) {
+            format_flags_masked(ds, NULL, packet_conn_state_to_string,
+                                nl_attr_get_u8(a), nl_attr_get_u8(ma));
+        } else {
+            format_flags(ds, packet_conn_state_to_string,
+                         nl_attr_get_u8(a), ',');
+        }
+        break;
+
     case OVS_KEY_ATTR_TUNNEL: {
         struct flow_tnl key, mask_;
         struct flow_tnl *mask = ma ? &mask_ : NULL;
@@ -2349,6 +2406,24 @@ scan_tcp_flags(const char *s, ovs_be16 *key, ovs_be16 *mask)
 }
 
 static int
+scan_conn_state(const char *s, uint8_t *key, uint8_t *mask)
+{
+    uint32_t flags, fmask;
+    int n;
+
+    n = parse_flags(s, packet_conn_state_to_string, &flags,
+                    UINT8_MAX, mask ? &fmask : NULL);
+    if (n >= 0) {
+        *key = htons(flags);
+        if (mask) {
+            *mask = htons(fmask);
+        }
+        return n;
+    }
+    return 0;
+}
+
+static int
 scan_frag(const char *s, uint8_t *key, uint8_t *mask)
 {
     int n;
@@ -2644,6 +2719,8 @@ parse_odp_key_mask_attr(const char *s, const struct simap *port_names,
     SCAN_SINGLE_NO_MASK("recirc_id(", uint32_t, u32, OVS_KEY_ATTR_RECIRC_ID);
     SCAN_SINGLE("dp_hash(", uint32_t, u32, OVS_KEY_ATTR_DP_HASH);
 
+    SCAN_SINGLE("conn_state(", uint8_t, conn_state, OVS_KEY_ATTR_CONN_STATE);
+
     SCAN_BEGIN("tunnel(", struct flow_tnl) {
         SCAN_FIELD("tun_id=", be64, tun_id);
         SCAN_FIELD("src=", ipv4, ip_src);
@@ -2871,6 +2948,7 @@ odp_flow_key_from_flow__(struct ofpbuf *buf, const struct flow *flow,
     }
 
     nl_msg_put_u32(buf, OVS_KEY_ATTR_SKB_MARK, data->pkt_mark);
+    nl_msg_put_u8(buf, OVS_KEY_ATTR_CONN_STATE, data->conn_state);
 
     if (recirc) {
         nl_msg_put_u32(buf, OVS_KEY_ATTR_RECIRC_ID, data->recirc_id);
@@ -3068,6 +3146,9 @@ odp_key_from_pkt_metadata(struct ofpbuf *buf, const struct pkt_metadata *md)
     }
 
     nl_msg_put_u32(buf, OVS_KEY_ATTR_SKB_MARK, md->pkt_mark);
+#if 0
+    nl_msg_put_u8(buf, OVS_KEY_ATTR_CONN_STATE, md->conn_state);
+#endif
 
     /* Add an ingress port attribute if 'odp_in_port' is not the magical
      * value "ODPP_NONE". */
@@ -3115,6 +3196,12 @@ odp_key_to_pkt_metadata(const struct nlattr *key, size_t key_len,
             md->pkt_mark = nl_attr_get_u32(nla);
             wanted_attrs &= ~(1u << OVS_KEY_ATTR_SKB_MARK);
             break;
+#if 0
+        case OVS_KEY_ATTR_CONN_STATE:
+            md->conn_state = nl_attr_get_u8(nla);
+            wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_STATE);
+            break;
+#endif
         case OVS_KEY_ATTR_TUNNEL: {
             enum odp_key_fitness res;
 
@@ -3664,6 +3751,11 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_SKB_MARK)) {
         flow->pkt_mark = nl_attr_get_u32(attrs[OVS_KEY_ATTR_SKB_MARK]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_SKB_MARK;
+    }
+
+    if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CONN_STATE)) {
+        flow->conn_state = nl_attr_get_u8(attrs[OVS_KEY_ATTR_CONN_STATE]);
+        expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_STATE;
     }
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_TUNNEL)) {

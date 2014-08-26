@@ -202,6 +202,10 @@ odp_execute_set_action(struct dpif_packet *packet, const struct nlattr *a)
         md->pkt_mark = nl_attr_get_u32(a);
         break;
 
+    case OVS_KEY_ATTR_CONN_STATE:
+        md->conn_state = nl_attr_get_u8(a);
+        break;
+
     case OVS_KEY_ATTR_ETHERNET:
         odp_eth_set_addrs(&packet->ofpbuf, nl_attr_get(a), NULL);
         break;
@@ -361,6 +365,7 @@ odp_execute_masked_set_action(struct dpif_packet *packet,
 
     case OVS_KEY_ATTR_TUNNEL:    /* Masked data not supported for tunnel. */
     case OVS_KEY_ATTR_UNSPEC:
+    case OVS_KEY_ATTR_CONN_STATE:
     case OVS_KEY_ATTR_ENCAP:
     case OVS_KEY_ATTR_ETHERTYPE:
     case OVS_KEY_ATTR_IN_PORT:
@@ -533,6 +538,10 @@ odp_execute_actions(void *dp, struct dpif_packet **packets, int cnt, bool steal,
                  * stolen them*/
                 return;
             }
+            break;
+
+        case OVS_ACTION_ATTR_CT:
+            /* xxx I don't think there's anything we can do here. */
             break;
 
         case OVS_ACTION_ATTR_UNSPEC:

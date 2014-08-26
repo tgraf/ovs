@@ -2628,6 +2628,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     struct flow_tnl flow_tnl;
     ovs_be16 flow_vlan_tci;
     uint32_t flow_pkt_mark;
+    uint8_t flow_conn_state;
     uint8_t flow_nw_tos;
     odp_port_t out_port, odp_port;
     bool tnl_push_pop_send = false;
@@ -2733,6 +2734,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
 
     flow_vlan_tci = flow->vlan_tci;
     flow_pkt_mark = flow->pkt_mark;
+    flow_conn_state = flow->conn_state;
     flow_nw_tos = flow->nw_tos;
 
     if (count_skb_priorities(xport)) {
@@ -2852,6 +2854,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     /* Restore flow */
     flow->vlan_tci = flow_vlan_tci;
     flow->pkt_mark = flow_pkt_mark;
+    flow->conn_state = flow_conn_state;
     flow->nw_tos = flow_nw_tos;
 }
 
@@ -3750,6 +3753,7 @@ ofpact_needs_recirculation_after_mpls(const struct ofpact *a, struct xlate_ctx *
     case OFPACT_WRITE_ACTIONS:
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_SAMPLE:
+    case OFPACT_CT:
         return false;
 
     case OFPACT_POP_MPLS:
@@ -3793,6 +3797,29 @@ ofpact_needs_recirculation_after_mpls(const struct ofpact *a, struct xlate_ctx *
     }
 
     OVS_NOT_REACHED();
+}
+
+static void
+compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc)
+{
+    size_t ct_offset;
+    struct ofpbuf *odp_actions = ctx->xout->odp_actions;
+    uint32_t flags = 0;
+
+    ct_offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_CT);
+
+    if (ofc->flags & NX_CT_F_COMMIT) {
+        flags |= OVS_CT_F_COMMIT;
+    }
+
+    nl_msg_put_u32(odp_actions, OVS_CT_ATTR_FLAGS, flags);
+    nl_msg_put_u16(odp_actions, OVS_CT_ATTR_ZONE, ofc->zone);
+    nl_msg_end_nested(odp_actions, ct_offset);
+
+    if (ofc->flags & NX_CT_F_RECIRC) {
+        /* xxx Choose real recird id */
+        nl_msg_put_u32(ctx->xout->odp_actions, OVS_ACTION_ATTR_RECIRC, 0);
+    }
 }
 
 static void
@@ -4101,6 +4128,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
 
         case OFPACT_SAMPLE:
             xlate_sample_action(ctx, ofpact_get_SAMPLE(a));
+            break;
+
+        case OFPACT_CT:
+            compose_conntrack_action(ctx, ofpact_get_CT(a));
             break;
         }
     }

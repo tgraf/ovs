@@ -53,7 +53,7 @@ int ovs_nla_get_match(struct sw_flow_match *, const struct nlattr *key,
 int ovs_nla_put_egress_tunnel_key(struct sk_buff *,
 				  const struct ovs_tunnel_info *);
 
-int ovs_nla_copy_actions(const struct nlattr *attr,
+int ovs_nla_copy_actions(struct net *net, const struct nlattr *attr,
 			 const struct sw_flow_key *key,
 			 struct sw_flow_actions **sfa, bool log);
 int ovs_nla_put_actions(const struct nlattr *attr,

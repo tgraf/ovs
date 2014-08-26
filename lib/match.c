@@ -245,6 +245,20 @@ match_set_pkt_mark_masked(struct match *match, uint32_t pkt_mark, uint32_t mask)
 }
 
 void
+match_set_conn_state(struct match *match, uint8_t conn_state)
+{
+    match_set_conn_state_masked(match, conn_state, UINT8_MAX);
+}
+
+void
+match_set_conn_state_masked(struct match *match, uint8_t conn_state,
+                            uint8_t mask)
+{
+    match->flow.conn_state = conn_state & mask;
+    match->wc.masks.conn_state = mask;
+}
+
+void
 match_set_dl_type(struct match *match, ovs_be16 dl_type)
 {
     match->wc.masks.dl_type = OVS_BE16_MAX;
@@ -895,6 +909,22 @@ match_format(const struct match *match, struct ds *s, int priority)
     if (wc->masks.actset_output) {
         ds_put_cstr(s, "actset_output=");
         ofputil_format_port(f->actset_output, s);
+        ds_put_char(s, ',');
+    }
+
+    if (wc->masks.conn_state) {
+        if (wc->masks.conn_state == UINT8_MAX) {
+            ds_put_cstr(s, "conn_state=");
+            if (f->conn_state) {
+                format_flags(s, packet_conn_state_to_string, f->conn_state,
+                             '|');
+            } else {
+                ds_put_cstr(s, "0"); /* No state. */
+            }
+        } else {
+            format_flags_masked(s, "conn_state", packet_conn_state_to_string,
+                                f->conn_state, wc->masks.conn_state);
+        }
         ds_put_char(s, ',');
     }
 
