@@ -1,4 +1,4 @@
-# Copyright (c) 2010, 2011, 2012 Nicira, Inc.
+# Copyright (c) 2010, 2011, 2012, 2015 Nicira, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -486,11 +486,11 @@ def _check_already_running():
                % (_pidfile, os.strerror(pid)))
 
 
-def add_args(parser):
+def add_args(parser, pidfile=None):
     """Populates 'parser', an ArgumentParser allocated using the argparse
     module, with the command line arguments required by the daemon module."""
 
-    pidfile = make_pidfile_name(None)
+    pidfile = make_pidfile_name(pidfile)
 
     group = parser.add_argument_group(title="Daemon Options")
     group.add_argument("--detach", action="store_true",

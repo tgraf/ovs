@@ -65,6 +65,7 @@ struct pkt_metadata {
     uint32_t skb_priority;      /* Packet priority for QoS. */
     uint32_t pkt_mark;          /* Packet mark. */
     union flow_in_port in_port; /* Input port. */
+    uint8_t conn_state;         /* Connection state. */
 };
 
 #define PKT_METADATA_INITIALIZER(PORT) \
@@ -585,6 +586,17 @@ struct tcp_header {
 };
 BUILD_ASSERT_DECL(TCP_HEADER_LEN == sizeof(struct tcp_header));
 
+/* Connection states */
+#define CS_NEW               0x01
+#define CS_ESTABLISHED       0x02
+#define CS_RELATED           0x04
+#define CS_INVALID           0x20
+#define CS_REPLY_DIR         0x40
+#define CS_TRACKED           0x80
+
+/* Undefined connection state bits. */
+#define CS_UNSUPPORTED_MASK  0x18
+
 #define ARP_HRD_ETHERNET 1
 #define ARP_PRO_IP 0x0800
 #define ARP_OP_REQUEST 1
@@ -787,5 +799,7 @@ void packet_format_tcp_flags(struct ds *, uint16_t);
 const char *packet_tcp_flag_to_string(uint32_t flag);
 void compose_arp(struct dp_packet *b, const uint8_t eth_src[ETH_ADDR_LEN],
                  ovs_be32 ip_src, ovs_be32 ip_dst);
+
+const char *packet_conn_state_to_string(uint32_t flag);
 
 #endif /* packets.h */
