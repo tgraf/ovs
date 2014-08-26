@@ -103,6 +103,8 @@ only metadata. The metadata can be:
 Packet QoS priority.
 .IP \fIpkt_mark\fR
 Mark of the packet.
+.IP \fIconn_state\fR
+Connection state of the packet.
 .IP \fItun_id\fR
 The tunnel ID on which the packet arrived.
 .IP \fIin_port\fR

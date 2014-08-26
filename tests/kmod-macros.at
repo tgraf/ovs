@@ -77,3 +77,27 @@ m4_define([ADD_VETH],
       AT_CHECK([ip netns exec $2 ip link set dev $1 up])
     ]
 )
+
+# NETNS_DAEMONIZE([namespace], [command], [pidfile])
+#
+# Run 'command' as a background process within 'namespace' and record its pid
+# to 'pidfile'.
+#
+m4_define([NETNS_DAEMONIZE],
+    [ echo "ip netns exec $1 $2 & echo \$! > $3"
+      ip netns exec $1 $2 & echo $! > $3
+      echo "kill \`cat $3\`" >> cleanup
+    ]
+)
+
+# LOAD_MODULES(module, [, module ... ])
+#
+# Load each 'module' into the kernel.
+#
+m4_define([LOAD_MODULES],
+    [m4_foreach([mod], [$@],
+                [AT_CHECK([modprobe mod])
+                 ON_EXIT([modprobe -r mod])
+                ])
+    ]
+)

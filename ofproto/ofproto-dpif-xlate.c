@@ -2724,6 +2724,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     struct flow_tnl flow_tnl;
     ovs_be16 flow_vlan_tci;
     uint32_t flow_pkt_mark;
+    uint8_t flow_conn_state;
     uint8_t flow_nw_tos;
     odp_port_t out_port, odp_port;
     bool tnl_push_pop_send = false;
@@ -2867,6 +2868,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
 
     flow_vlan_tci = flow->vlan_tci;
     flow_pkt_mark = flow->pkt_mark;
+    flow_conn_state = flow->conn_state;
     flow_nw_tos = flow->nw_tos;
 
     if (count_skb_priorities(xport)) {
@@ -2986,6 +2988,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     /* Restore flow */
     flow->vlan_tci = flow_vlan_tci;
     flow->pkt_mark = flow_pkt_mark;
+    flow->conn_state = flow_conn_state;
     flow->nw_tos = flow_nw_tos;
 }
 
@@ -3450,9 +3453,10 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
     dp_packet_delete(packet);
 }
 
-/* Called only when ctx->recirc_action_offset is set. */
 static void
-compose_recirculate_action(struct xlate_ctx *ctx)
+compose_recirculate_action__(struct xlate_ctx *ctx, struct ofpbuf *stack,
+                             int action_offset, uint32_t ofpacts_len,
+                             const struct ofpact *ofpacts)
 {
     struct recirc_metadata md;
     bool use_masked;
@@ -3465,16 +3469,15 @@ compose_recirculate_action(struct xlate_ctx *ctx)
 
     recirc_metadata_from_flow(&md, &ctx->xin->flow);
 
-    ovs_assert(ctx->recirc_action_offset >= 0);
+    ovs_assert(action_offset >= 0);
 
     /* Only allocate recirculation ID if we have a packet. */
     if (ctx->xin->packet) {
         /* Allocate a unique recirc id for the given metadata state in the
          * flow.  The life-cycle of this recirc id is managed by associating it
          * with the udpif key ('ukey') created for each new datapath flow. */
-        id = recirc_alloc_id_ctx(ctx->xbridge->ofproto, 0, &md, &ctx->stack,
-                                 ctx->recirc_action_offset,
-                                 ctx->action_set.size, ctx->action_set.data);
+        id = recirc_alloc_id_ctx(ctx->xbridge->ofproto, 0, &md, stack,
+                                 action_offset, ofpacts_len, ofpacts);
         if (!id) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
             VLOG_ERR_RL(&rl, "Failed to allocate recirculation id");
@@ -3485,14 +3488,21 @@ compose_recirculate_action(struct xlate_ctx *ctx)
         /* Look up an existing recirc id for the given metadata state in the
          * flow.  No new reference is taken, as the ID is RCU protected and is
          * only required temporarily for verification. */
-        id = recirc_find_id(ctx->xbridge->ofproto, 0, &md, &ctx->stack,
-                            ctx->recirc_action_offset,
-                            ctx->action_set.size, ctx->action_set.data);
+        id = recirc_find_id(ctx->xbridge->ofproto, 0, &md, stack,
+                            action_offset, ofpacts_len, ofpacts);
         /* We let zero 'id' to be used in the RECIRC action below, which will
          * fail all revalidations as zero is not a valid recirculation ID. */
     }
 
     nl_msg_put_u32(ctx->xout->odp_actions, OVS_ACTION_ATTR_RECIRC, id);
+}
+
+/* Called only when ctx->recirc_action_offset is set. */
+static void
+compose_recirculate_action(struct xlate_ctx *ctx)
+{
+    compose_recirculate_action__(ctx, &ctx->stack, ctx->recirc_action_offset,
+                                 ctx->action_set.size, ctx->action_set.data);
 
     /* Undo changes done by recirculation. */
     ctx->action_set.size = ctx->recirc_action_offset;
@@ -4040,6 +4050,7 @@ recirc_unroll_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
         case OFPACT_WRITE_ACTIONS:
         case OFPACT_METER:
         case OFPACT_SAMPLE:
+        case OFPACT_CT:
             break;
 
             /* These need not be copied for restoration. */
@@ -4061,6 +4072,28 @@ recirc_unroll_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
     if (COND) {                           \
         CHECK_MPLS_RECIRCULATION();       \
     }
+
+static void
+compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc)
+{
+    size_t ct_offset;
+    struct ofpbuf *odp_actions = ctx->xout->odp_actions;
+    uint32_t flags = 0;
+
+    ct_offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_CT);
+
+    if (ofc->flags & NX_CT_F_COMMIT) {
+        flags |= OVS_CT_F_COMMIT;
+    }
+
+    nl_msg_put_u32(odp_actions, OVS_CT_ATTR_FLAGS, flags);
+    nl_msg_put_u16(odp_actions, OVS_CT_ATTR_ZONE, ofc->zone);
+    nl_msg_end_nested(odp_actions, ct_offset);
+
+    if (ofc->flags & NX_CT_F_RECIRC) {
+        compose_recirculate_action__(ctx, NULL, 0, 0, NULL);
+    }
+}
 
 static void
 do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
@@ -4425,6 +4458,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
 
         case OFPACT_SAMPLE:
             xlate_sample_action(ctx, ofpact_get_SAMPLE(a));
+            break;
+
+        case OFPACT_CT:
+            compose_conntrack_action(ctx, ofpact_get_CT(a));
             break;
         }
 

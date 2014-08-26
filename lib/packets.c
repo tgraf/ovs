@@ -1043,3 +1043,24 @@ compose_arp(struct dp_packet *b, const uint8_t eth_src[ETH_ADDR_LEN],
     dp_packet_set_frame(b, eth);
     dp_packet_set_l3(b, arp);
 }
+
+const char *
+packet_conn_state_to_string(uint32_t flag)
+{
+    switch (flag) {
+    case CS_REPLY_DIR:
+        return "rpl";
+    case CS_TRACKED:
+        return "trk";
+    case CS_NEW:
+        return "new";
+    case CS_ESTABLISHED:
+        return "est";
+    case CS_RELATED:
+        return "rel";
+    case CS_INVALID:
+        return "inv";
+    default:
+        return NULL;
+    }
+}

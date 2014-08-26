@@ -1,4 +1,6 @@
-AT_BANNER([kmod-sanity])
+m4_define([FORMAT_CT], [[grep "dst=$1" | sed -e 's/port=[0-9]*/port=<cleared>/g' -e 's/  */ /g' | cut -d' ' -f4- | sort | uniq]])
+
+AT_BANNER([kmod-traffic])
 
 AT_SETUP([kmod - ping between two ports])
 OVS_KMOD_VSWITCHD_START(
@@ -13,4 +15,176 @@ AT_CAPTURE_FILE([ping.output])
 AT_CHECK([ip netns exec at_ns0 bash -c "ping -q -c 3 -i 0.3 -w 2 10.1.1.2 > ping.output"])
 
 OVS_KMOD_VSWITCHD_STOP([], DEL_NAMESPACES(at_ns0, at_ns1))
+AT_CLEANUP
+
+AT_SETUP([conntrack - controller])
+AT_SKIP_IF([test $HAVE_PYTHON = no])
+LOAD_MODULES([nf_conntrack_ipv4])
+OVS_KMOD_VSWITCHD_START(
+   [set-fail-mode br0 standalone -- ])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+
+dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
+AT_DATA([flows.txt], [dnl
+priority=1,action=drop
+priority=10,arp,action=normal
+in_port=1,udp,action=ct(commit,zone=0),controller
+in_port=2,conn_state=-trk,udp,action=ct(recirc,zone=0)
+in_port=2,conn_state=+trk+est-new,udp,action=controller
+])
+
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+AT_CAPTURE_FILE([ofctl_monitor.log])
+AT_CHECK([ovs-ofctl monitor br0 65534 invalid_ttl --detach --no-chdir --pidfile 2> ofctl_monitor.log])
+
+dnl Send an unsolicited reply from port 2. This should be dropped.
+AT_CHECK([ovs-ofctl -O OpenFlow13 packet-out br0 2 ct\(recirc,zone=0\) '50540000000a50540000000908004500001c00000000001100000a0101020a0101010002000100080000'])
+
+dnl OK, now start a new connection from port 1.
+AT_CHECK([ovs-ofctl -O OpenFlow13 packet-out br0 1 ct\(commit,zone=0\),controller '50540000000a50540000000908004500001c00000000001100000a0101010a0101020001000200080000'])
+
+dnl Now try a reply from port 2.
+AT_CHECK([ovs-ofctl -O OpenFlow13 packet-out br0 2 ct\(recirc,zone=0\) '50540000000a50540000000908004500001c00000000001100000a0101020a0101010002000100080000'])
+
+dnl Check this output. We only see the latter two packets, not the first.
+AT_CHECK([cat ofctl_monitor.log], [0], [dnl
+NXT_PACKET_IN (xid=0x0): total_len=42 in_port=1 (via action) data_len=42 (unbuffered)
+udp,in_port=0,vlan_tci=0x0000,dl_src=50:54:00:00:00:09,dl_dst=50:54:00:00:00:0a,nw_src=10.1.1.1,nw_dst=10.1.1.2,nw_tos=0,nw_ecn=0,nw_ttl=0,tp_src=1,tp_dst=2 udp_csum:0
+NXT_PACKET_IN (xid=0x0): cookie=0x0 total_len=42 in_port=2 conn_state=0xc2 (via action) data_len=42 (unbuffered)
+udp,in_port=0,vlan_tci=0x0000,dl_src=50:54:00:00:00:09,dl_dst=50:54:00:00:00:0a,nw_src=10.1.1.2,nw_dst=10.1.1.1,nw_tos=0,nw_ecn=0,nw_ttl=0,tp_src=2,tp_dst=1 udp_csum:0
+])
+
+OVS_KMOD_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([conntrack - IPv4 HTTP])
+AT_SKIP_IF([test $HAVE_PYTHON = no])
+LOAD_MODULES([nf_conntrack_ipv4])
+OVS_KMOD_VSWITCHD_START(
+   [set-fail-mode br0 standalone -- ])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+
+dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
+AT_DATA([flows.txt], [dnl
+priority=1,action=drop
+priority=10,arp,action=normal
+priority=10,icmp,action=normal
+in_port=1,tcp,action=ct(commit,zone=0),2
+in_port=2,conn_state=-trk,tcp,action=ct(recirc,zone=0)
+in_port=2,conn_state=+trk+est-new,tcp,action=1
+])
+
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+dnl Basic connectivity check.
+AT_CHECK([ip netns exec at_ns0 bash -c "ping -q -c 3 -i 0.3 -w 2 10.1.1.2 >/dev/null"])
+
+dnl HTTP requests from ns0->ns1 should work fine.
+NETNS_DAEMONIZE([at_ns1], [[$PYTHON $srcdir/test-conntrack.py]], [test-conntrack0.pid])
+AT_CHECK([ip netns exec at_ns0 wget 10.1.1.2 -t 3 -T 1 --retry-connrefused -v -o wget0.log])
+
+AT_CHECK([conntrack -L 2>&1 | FORMAT_CT(10.1.1.2)], [0], [dnl
+TIME_WAIT src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> [[ASSURED]] mark=0 use=1
+])
+
+dnl HTTP requests from ns1->ns0 should fail due to network failure.
+dnl Try 5 times, in 1 second intervals.
+NETNS_DAEMONIZE([at_ns0], [[$PYTHON $srcdir/test-conntrack.py]], [test-conntrack1.pid])
+AT_CHECK([ip netns exec at_ns1 wget 10.1.1.1 -t 3 -T 1 -v -o wget1.log], [4])
+
+OVS_KMOD_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([conntrack - IPv6 HTTP])
+AT_SKIP_IF([test $HAVE_PYTHON = no])
+LOAD_MODULES([nf_conntrack_ipv6])
+OVS_KMOD_VSWITCHD_START(
+   [set-fail-mode br0 standalone -- ])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "fc00::1/96")
+ADD_VETH(p1, at_ns1, br0, "fc00::2/96")
+
+dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
+AT_DATA([flows.txt], [dnl
+priority=1,action=drop
+priority=10,icmp6,action=normal
+in_port=1,tcp6,action=ct(commit,zone=0),2
+in_port=2,conn_state=-trk,tcp6,action=ct(recirc,zone=0)
+in_port=2,conn_state=+trk+est-new,tcp6,action=1
+])
+
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+dnl Without this sleep, we get occasional failures due to the following error:
+dnl "connect: Cannot assign requested address"
+sleep 2;
+
+dnl Basic connectivity check.
+AT_CHECK([ip netns exec at_ns0 ping6 -q -c 3 -i 0.3 -w 2 fc00::2 >ping.output])
+
+dnl HTTP requests from ns0->ns1 should work fine.
+NETNS_DAEMONIZE([at_ns1], [[$PYTHON $srcdir/test-conntrack.py http6]], [test-conntrack0.pid])
+
+AT_CHECK([ip netns exec at_ns0 wget http://[[fc00::2]] -t 3 -T 1 --retry-connrefused -v -o wget0.log])
+
+dnl HTTP requests from ns1->ns0 should fail due to network failure.
+dnl Try 5 times, in 1 second intervals.
+NETNS_DAEMONIZE([at_ns0], [[$PYTHON $srcdir/test-conntrack.py http6]], [test-conntrack1.pid])
+AT_CHECK([ip netns exec at_ns1 wget http://[[fc00::1]] -t 3 -T 1 -v -o wget1.log], [4])
+
+OVS_KMOD_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([conntrack - invalid])
+AT_SKIP_IF([test $HAVE_PYTHON = no])
+OVS_KMOD_VSWITCHD_START(
+   [set-fail-mode br0 standalone -- ])
+
+ADD_NAMESPACES(at_ns0, at_ns1, at_ns2, at_ns3)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+ADD_VETH(p2, at_ns2, br0, "10.1.1.3/24")
+ADD_VETH(p3, at_ns3, br0, "10.1.1.4/24")
+
+dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
+AT_DATA([flows.txt], [dnl
+priority=1,action=drop
+priority=10,arp,action=normal
+priority=10,icmp,action=normal
+in_port=1,tcp,action=ct(zone=0),2
+in_port=2,conn_state=-trk,tcp,action=ct(recirc,zone=0)
+in_port=2,conn_state=+trk+new,tcp,action=1
+in_port=3,tcp,action=ct(zone=0),4
+in_port=4,conn_state=-trk,tcp,action=ct(recirc,zone=0)
+in_port=4,conn_state=+trk+inv,tcp,action=3
+in_port=4,conn_state=+trk+new,tcp,action=3
+])
+
+ovs-appctl vlog/set dpif:dbg
+
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+dnl We set up our rules to allow the request without committing. The return
+dnl traffic can't be identified, because the initial request wasn't committed.
+dnl For the first pair of ports, this means that the connection fails.
+NETNS_DAEMONIZE([at_ns1], [[$PYTHON $srcdir/test-conntrack.py]], [test-conntrack0.pid])
+AT_CHECK([ip netns exec at_ns0 wget 10.1.1.2 -t 3 -T 1 --retry-connrefused -v -o wget0.log], [4])
+
+dnl For the second pair, we allow packets from invalid connections, so it works.
+NETNS_DAEMONIZE([at_ns3], [[$PYTHON $srcdir/test-conntrack.py]], [test-conntrack1.pid])
+AT_CHECK([ip netns exec at_ns2 wget 10.1.1.4 -t 3 -T 1 --retry-connrefused -v -o wget1.log])
+
+OVS_KMOD_VSWITCHD_STOP
 AT_CLEANUP
