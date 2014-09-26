@@ -1352,6 +1352,23 @@ static struct sw_flow_actions *nla_alloc_flow_actions(int size)
 
 void ovs_nla_free_flow_actions(struct sw_flow_actions *sf_acts)
 {
+	if (sf_acts) {
+		struct ovs_conntrack_info *ct_info;
+		struct nlattr *a;
+		int rem, len = sf_acts->actions_len;
+
+		for (a = sf_acts->actions, rem = len; rem > 0;
+			a = nla_next(a, &rem)) {
+			switch (nla_type(a)) {
+			case OVS_ACTION_ATTR_CONNTRACK:
+				ct_info = nla_data(a);
+				if (ct_info->ct)
+					nf_ct_put(ct_info->ct);
+				break;
+			}
+		}
+	}
+
 	kfree(sf_acts);
 }
 
@@ -1500,6 +1517,11 @@ static int validate_and_copy_conntrack(struct net *net,
 		case OVS_CT_ATTR_ZONE:
 			memset(&t, 0, sizeof(t));
 			ct_info.zone = nla_get_u16(a);
+			ct_info.ct = nf_conntrack_alloc(net, ct_info.zone, &t, &t, GFP_KERNEL);
+			if (!ct_info.ct)
+				return -ENOMEM;
+
+			nf_conntrack_tmpl_insert(net, ct_info.ct);
 			break;
 		default:
 			OVS_NLERR("Unknown conntrack attribute (%d).\n", type);

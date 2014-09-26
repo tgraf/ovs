@@ -750,6 +750,7 @@ static int conntrack(struct datapath *dp, struct sk_buff *skb,
 {
 	int nh_ofs = skb_network_offset(skb);
 	struct net *net = ovs_dp_get_net(dp);
+	struct nf_conn *ct = info->ct;
 
 	if (skb->nfct) {
 		pr_warn_once("Attempt to run through conntrack again\n");
@@ -758,6 +759,13 @@ static int conntrack(struct datapath *dp, struct sk_buff *skb,
 
 	/* The conntrack module expects to be working at L3. */
 	skb_pull(skb, nh_ofs);
+
+	/* Associate skb with specified zone */
+	if (ct) {
+		atomic_inc(&ct->ct_general.use);
+		skb->nfct = &ct->ct_general;
+		skb->nfctinfo = IP_CT_NEW;
+	}
 
 	/* xxx What's the best return val? */
 	if (nf_conntrack_in(net, PF_INET, NF_INET_PRE_ROUTING, skb) != NF_ACCEPT)

@@ -121,6 +121,7 @@ static inline void ovs_flow_tun_info_init(struct ovs_tunnel_info *tun_info,
 
 struct ovs_conntrack_info {
 	u16 zone;
+	struct nf_conn *ct;
 };
 
 #define OVS_SW_FLOW_KEY_METADATA_SIZE			\
