@@ -529,6 +529,7 @@ odp_execute_actions__(void *dp, struct dpif_packet **packets, int cnt,
             break;
 
         case OVS_ACTION_ATTR_CONNTRACK:
+        case OVS_ACTION_ATTR_NAT:
             /* xxx I don't think there's anything we can do here. */
             break;
 

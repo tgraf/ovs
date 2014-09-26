@@ -3591,6 +3591,7 @@ ofpact_needs_recirculation_after_mpls(const struct xlate_ctx *ctx,
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_SAMPLE:
     case OFPACT_CONNTRACK:
+    case OFPACT_NAT:
         return false;
 
     case OFPACT_SET_IPV4_SRC:
@@ -3649,6 +3650,22 @@ compose_conntrack_action(struct xlate_ctx *ctx, struct ofpact_conntrack *ofc)
         /* xxx Choose real recird id */
         nl_msg_put_u32(ctx->xout->odp_actions, OVS_ACTION_ATTR_RECIRC, 0);
     }
+}
+
+static void
+compose_nat_action(struct xlate_ctx *ctx, struct ofpact_nat *ofn)
+{
+    size_t nat_offset;
+    struct ofpbuf *odp_actions = ctx->xout->odp_actions;
+
+    nat_offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_NAT);
+    nl_msg_put_u32(odp_actions, OVS_NAT_ATTR_TYPE, ofn->nat_type);
+    nl_msg_put_u32(odp_actions, OVS_NAT_ATTR_IP_MIN, ofn->ip_min);
+    nl_msg_put_u32(odp_actions, OVS_NAT_ATTR_IP_MAX, ofn->ip_max);
+    nl_msg_put_u16(odp_actions, OVS_NAT_ATTR_PROTO_MIN, ofn->proto_min);
+    nl_msg_put_u16(odp_actions, OVS_NAT_ATTR_PROTO_MIN, ofn->proto_max);
+    nl_msg_put_u32(odp_actions, OVS_NAT_ATTR_FLAGS, ofn->flags);
+    nl_msg_end_nested(odp_actions, nat_offset);
 }
 
 static void
@@ -3956,6 +3973,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
 
         case OFPACT_CONNTRACK:
             compose_conntrack_action(ctx, ofpact_get_CONNTRACK(a));
+            break;
+
+        case OFPACT_NAT:
+            compose_nat_action(ctx, ofpact_get_NAT(a));
             break;
         }
     }

@@ -270,6 +270,9 @@ enum ofp_raw_action_type {
 
     /* NX1.0+(32): struct nx_action_conntrack. */
     NXAST_RAW_CONNTRACK,
+
+    /* NX1.0+(33): struct nx_action_nat. */
+    NXAST_RAW_NAT,
 };
 
 /* OpenFlow actions are always a multiple of 8 bytes in length. */
@@ -4007,6 +4010,100 @@ format_CONNTRACK(const struct ofpact_conntrack *a, struct ds *s)
                   a->flags, a->zone);
 }
 
+/* Action structure for NXAST_NAT.
+ *
+ * Perform stateful network address translation.
+ * Pass traffic to the connection tracker.  If 'flags' is
+ * NX_CONNTRACK_F_RECIRC, traffic is recirculated back to flow table
+ * with the NXM_NX_CONN_STATE and NXM_NX_CONN_STATE_W matches set.  A
+ * standard "resubmit" action is not sufficient, since connection
+ * tracking occurs outside of the classifier.  The 'zone' argument
+ * specifies a context within which the tracking is done. */
+struct nx_action_nat {
+    ovs_be16 type;              /* OFPAT_VENDOR. */
+    ovs_be16 len;               /* 16. */
+    ovs_be32 vendor;            /* NX_VENDOR_ID. */
+    ovs_be16 subtype;           /* NXAST_NAT. */
+    ovs_be16 flags;             /* Either 0 or NX_CONNTRACK_F_RECIRC. */
+    ovs_be32 nat_type;          /* NAT type */
+    ovs_be32 ip_min;            /* Minimum IP range */
+    ovs_be32 ip_max;            /* Maximum IP range */
+    ovs_be16 proto_min;         /* Minimum L4 protocol range */
+    ovs_be16 proto_max;         /* Maximum L4 protocol  range */
+    uint8_t  pad[4];
+};
+OFP_ASSERT(sizeof(struct nx_action_nat) == 32);
+
+static enum ofperr
+decode_NXAST_RAW_NAT(const struct nx_action_nat *nan,
+                           struct ofpbuf *out)
+{
+    struct ofpact_nat *nat;
+
+    nat = ofpact_put_NAT(out);
+    nat->flags = ntohs(nan->flags);
+    nat->nat_type = ntohl(nan->nat_type);
+    nat->ip_min = nan->ip_min;
+    nat->ip_max = nan->ip_max;
+
+    return 0;
+}
+
+static void
+encode_NAT(const struct ofpact_nat *nat,
+           enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
+{
+    struct nx_action_nat *nan;
+
+    nan = put_NXAST_NAT(out);
+    nan->flags = htons(nat->flags);
+    nan->nat_type = htonl(nat->nat_type);
+    nan->ip_min = nat->ip_min;
+    nan->ip_max = nat->ip_max;
+}
+
+/* Parses 'arg' as the argument to a "nat" action, and appends such an
+ * action to 'ofpacts'.
+ *
+ * Returns NULL if successful, otherwise a malloc()'d string describing the
+ * error.  The caller is responsible for freeing the returned string. */
+static char * WARN_UNUSED_RESULT
+parse_NAT(char *arg, struct ofpbuf *ofpacts,
+             enum ofputil_protocol *usable_protocols OVS_UNUSED)
+{
+    struct ofpact_nat *on = ofpact_put_NAT(ofpacts);
+    char *key, *value;
+
+    while (ofputil_parse_key_value(&arg, &key, &value)) {
+        char *error = NULL;
+
+        if (!strcmp(key, "type")) {
+            error = str_to_u32(value, &on->nat_type);
+        } else if (!strcmp(key, "flags")) {
+            error = str_to_u16(value, "flags", &on->flags);
+        } else if (!strcmp(key, "ip_min")) {
+            error = str_to_ip(value, &on->ip_min);
+        } else if (!strcmp(key, "ip_max")) {
+            error = str_to_ip(value, &on->ip_max);
+        } else {
+            error = xasprintf("invalid key \"%s\" in \"nat\" argument",
+                              key);
+        }
+        if (error) {
+            return error;
+        }
+    }
+    return NULL;
+}
+
+static void
+format_NAT(const struct ofpact_nat *a, struct ds *s)
+{
+    ds_put_format(s, "nat(type=%"PRIu32",ip_min="IP_FMT"," \
+                     "ip_max="IP_FMT",flags=%"PRIu16")",
+                     a->nat_type, IP_ARGS(a->ip_min), IP_ARGS(a->ip_max), a->flags);
+}
+
 /* Meter instruction. */
 
 static void
@@ -4388,6 +4485,7 @@ ofpact_is_set_or_move_action(const struct ofpact *a)
     case OFPACT_BUNDLE:
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_CONNTRACK:
+    case OFPACT_NAT:
     case OFPACT_CONTROLLER:
     case OFPACT_DEC_MPLS_TTL:
     case OFPACT_DEC_TTL:
@@ -4461,6 +4559,7 @@ ofpact_is_allowed_in_actions_set(const struct ofpact *a)
     case OFPACT_BUNDLE:
     case OFPACT_CONTROLLER:
     case OFPACT_CONNTRACK:
+    case OFPACT_NAT:
     case OFPACT_ENQUEUE:
     case OFPACT_EXIT:
     case OFPACT_FIN_TIMEOUT:
@@ -4686,6 +4785,7 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type)
     case OFPACT_EXIT:
     case OFPACT_SAMPLE:
     case OFPACT_CONNTRACK:
+    case OFPACT_NAT:
     default:
         return OVSINST_OFPIT11_APPLY_ACTIONS;
     }
@@ -5250,6 +5350,9 @@ ofpact_check__(enum ofputil_protocol *usable_protocols, struct ofpact *a,
     case OFPACT_CONNTRACK:
         return 0;
 
+    case OFPACT_NAT:
+        return 0;
+
     case OFPACT_CLEAR_ACTIONS:
         return 0;
 
@@ -5670,6 +5773,7 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_METER:
     case OFPACT_GROUP:
     case OFPACT_CONNTRACK:
+    case OFPACT_NAT:
     default:
         return false;
     }

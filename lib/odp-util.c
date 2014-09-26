@@ -85,6 +85,7 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_SET_MASKED: return -2;
     case OVS_ACTION_ATTR_SAMPLE: return -2;
     case OVS_ACTION_ATTR_CONNTRACK: return -2;
+    case OVS_ACTION_ATTR_NAT: return -2;
 
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -526,6 +527,90 @@ format_odp_conntrack_action(struct ds *ds, const struct nlattr *attr)
 }
 
 static void
+format_odp_nat_action(struct ds *ds, const struct nlattr *attr)
+{
+    static const struct nl_policy ovs_nat_policy[] = {
+        [OVS_NAT_ATTR_TYPE] = { .type = NL_A_U32 },
+        [OVS_NAT_ATTR_IP_MIN] = { .type = NL_A_U32,
+                                  .optional = true, },
+        [OVS_NAT_ATTR_IP_MAX] = { .type = NL_A_U32,
+                                  .optional = true, },
+        [OVS_NAT_ATTR_PROTO_MIN] = { .type = NL_A_U16,
+                                     .optional = true, },
+        [OVS_NAT_ATTR_PROTO_MAX] = { .type = NL_A_U16,
+                                     .optional = true, },
+        [OVS_NAT_ATTR_FLAGS] = { .type = NL_A_U32,
+                                 .optional = true, },
+    };
+    struct nlattr *a[ARRAY_SIZE(ovs_nat_policy)];
+    ovs_be32 ip_min = 0, ip_max = 0;
+    ovs_be16 proto_min = 0, proto_max = 0;
+    uint32_t type, flags = 0;
+
+    if (!nl_parse_nested(attr, ovs_nat_policy, a, ARRAY_SIZE(a))) {
+        ds_put_cstr(ds, "nat(error)");
+        return;
+    }
+
+    type = nl_attr_get_u32(a[OVS_NAT_ATTR_TYPE]);
+
+    if (a[OVS_NAT_ATTR_IP_MIN]) {
+        ip_min = nl_attr_get_be32(a[OVS_NAT_ATTR_IP_MIN]);
+    }
+
+    if (a[OVS_NAT_ATTR_IP_MAX]) {
+        ip_max = nl_attr_get_be32(a[OVS_NAT_ATTR_IP_MAX]);
+    }
+
+    if (a[OVS_NAT_ATTR_PROTO_MIN]) {
+        proto_min = nl_attr_get_be16(a[OVS_NAT_ATTR_PROTO_MIN]);
+    }
+
+    if (a[OVS_NAT_ATTR_PROTO_MAX]) {
+        proto_max = nl_attr_get_be16(a[OVS_NAT_ATTR_PROTO_MAX]);
+    }
+
+    if (a[OVS_NAT_ATTR_FLAGS]) {
+        flags = nl_attr_get_u32(a[OVS_NAT_ATTR_FLAGS]);
+    }
+
+    ds_put_format(ds, "nat(type=%u", type);
+
+    if (ip_min) {
+        ds_put_format(ds, ",ip_min="IP_FMT, IP_ARGS(ip_min));
+
+        if (ip_min != ip_max) {
+            ds_put_format(ds, ",ip_max="IP_FMT, IP_ARGS(ip_max));
+        }
+    }
+
+    if (proto_min) {
+        ds_put_format(ds, ":%"PRIu16, proto_min);
+
+        if (proto_min != proto_max) {
+            ds_put_format(ds, "-%"PRIu16, proto_min);
+        }
+    }
+
+    if (flags) {
+		ds_put_format(ds, ",flags=");
+        if (flags & OVS_NAT_FLAG_PERSISTENT) {
+            ds_put_format(ds, ",persistent");
+        }
+
+        if (flags & OVS_NAT_FLAG_PROTO_RAND) {
+            ds_put_format(ds, ",hash-map");
+        }
+
+        if (flags & OVS_NAT_FLAG_PROTO_FULL_RAND) {
+            ds_put_format(ds, ",random");
+        }
+    }
+
+    ds_put_format(ds, ")");
+}
+
+static void
 format_odp_action(struct ds *ds, const struct nlattr *a)
 {
     int expected_len;
@@ -612,6 +697,9 @@ format_odp_action(struct ds *ds, const struct nlattr *a)
         format_odp_conntrack_action(ds,a);
         break;
     }
+    case OVS_ACTION_ATTR_NAT:
+        format_odp_nat_action(ds, a);
+        break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
     default:
@@ -912,6 +1000,31 @@ parse_odp_action(const char *s, const struct simap *port_names,
             nl_msg_end_nested(actions, ct_ofs);
 
             return n;
+        }
+    }
+
+    {
+        ovs_be32 ip_min = 0, ip_max = 0;
+        size_t nat_ofs;
+        int n = -1, flags = 0, type;
+
+        if (ovs_scan(s, "nat(type=%i,ip_min="IP_SCAN_FMT",ip_max="IP_SCAN_FMT",flags=%i)%n",
+			         &type, IP_SCAN_ARGS(&ip_min), IP_SCAN_ARGS(&ip_max), &flags, &n)) {
+
+            nat_ofs = nl_msg_start_nested(actions, OVS_ACTION_ATTR_NAT);
+
+            /* FIXME: Add correct parsers */
+            nl_msg_put_u32(actions, OVS_NAT_ATTR_TYPE, type);
+
+            if (ip_min) {
+                nl_msg_put_be32(actions, OVS_NAT_ATTR_IP_MIN, ip_min);
+                nl_msg_put_be32(actions, OVS_NAT_ATTR_IP_MAX, ip_max);
+            }
+
+            nl_msg_end_nested(actions, nat_ofs);
+
+            return n;
+
         }
     }
 

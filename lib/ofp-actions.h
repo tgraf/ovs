@@ -106,6 +106,7 @@
     OFPACT(EXIT,            ofpact_null,        ofpact, "exit")         \
     OFPACT(SAMPLE,          ofpact_sample,      ofpact, "sample")       \
     OFPACT(CONNTRACK,       ofpact_conntrack,   ofpact, "conntrack")    \
+    OFPACT(NAT,             ofpact_nat,         ofpact, "nat")          \
                                                                         \
     /* Instructions. */                                                 \
     OFPACT(METER,           ofpact_meter,       ofpact, "meter")        \
@@ -488,6 +489,27 @@ struct ofpact_conntrack {
     struct ofpact ofpact;
     uint16_t flags;
     uint16_t zone;
+};
+
+/* Bits for 'flags' in struct nx_action_nat.
+ */
+enum nx_nat_flags {
+    NX_NAT_F_PERSISTENT = 1 << 0,
+    NX_NAT_F_PROTO_RAND = 1 << 1,
+    NX_NAT_F_PROTO_FULL_RAND = 1 << 2,
+};
+
+/* OFPACT_NAT.
+ *
+ * Used for NXAST_NAT. */
+struct ofpact_nat {
+    struct ofpact ofpact;
+    uint32_t nat_type;
+    ovs_be32 ip_min;
+    ovs_be32 ip_max;
+    ovs_be16 proto_min;
+    ovs_be16 proto_max;
+    uint16_t flags;
 };
 
 static inline size_t
