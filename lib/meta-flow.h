@@ -46,6 +46,7 @@ enum OVS_PACKED_ENUM mf_field_id {
     MFF_IN_PORT_OXM,            /* be32 */
     MFF_SKB_PRIORITY,           /* be32 */
     MFF_PKT_MARK,               /* be32 */
+    MFF_CONN_STATE,             /* u8 */
 
 #if FLOW_N_REGS == 8
     MFF_REG0,                   /* be32 */

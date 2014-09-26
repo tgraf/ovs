@@ -968,6 +968,28 @@ OFP_ASSERT(sizeof(struct nx_async_config) == 24);
  * Masking: not maskable. */
 #define NXM_NX_RECIRC_ID   NXM_HEADER  (0x0001, 36, 4)
 
+/* Connection tracking state.
+ *
+ * The connection tracking state is populated by the NXAST_CONNTRACK
+ * action.  The following flags are defined:
+ *
+ *   - CONN_STATE_TRACKED (0x80): Connection tracking has occurred.
+ *   - CONN_STATE_REPLY (0x40): This flow did not initiate the connection.
+ *
+ * The following values describe the state of the connection:
+ *
+ *   - New (0x01): This is the beginning of a new connection.
+ *   - Established (0x02): This is part of an already existing connection.
+ *   - Related (0x04): This is a new connection that is "expected".
+ *
+ * Prereqs: None.
+ *
+ * Format: 8-bit fully maskable
+ *
+ * Masking: Fully maskable. */
+#define NXM_NX_CONN_STATE   NXM_HEADER  (0x0001, 37, 1)
+#define NXM_NX_CONN_STATE_W NXM_HEADER_W(0x0001, 37, 1)
+
 /* ## --------------------- ## */
 /* ## Requests and replies. ## */
 /* ## --------------------- ## */

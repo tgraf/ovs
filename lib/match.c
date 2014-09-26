@@ -60,6 +60,10 @@ match_wc_init(struct match *match, const struct flow *flow)
         memset(&wc->masks.pkt_mark, 0xff, sizeof wc->masks.pkt_mark);
     }
 
+    if (flow->conn_state) {
+        memset(&wc->masks.conn_state, 0xff, sizeof wc->masks.conn_state);
+    }
+
     for (i = 0; i < FLOW_N_REGS; i++) {
         if (flow->regs[i]) {
             memset(&wc->masks.regs[i], 0xff, sizeof wc->masks.regs[i]);
@@ -332,6 +336,20 @@ match_set_pkt_mark_masked(struct match *match, uint32_t pkt_mark, uint32_t mask)
 {
     match->flow.pkt_mark = pkt_mark & mask;
     match->wc.masks.pkt_mark = mask;
+}
+
+void
+match_set_conn_state(struct match *match, uint8_t conn_state)
+{
+    match_set_conn_state_masked(match, conn_state, UINT8_MAX);
+}
+
+void
+match_set_conn_state_masked(struct match *match, uint8_t conn_state,
+                            uint8_t mask)
+{
+    match->flow.conn_state = conn_state & mask;
+    match->wc.masks.conn_state = mask;
 }
 
 void
@@ -867,6 +885,19 @@ format_ipv6_netmask(struct ds *s, const char *name,
 }
 
 static void
+format_uint8_masked(struct ds *s, const char *name,
+                   uint8_t value, uint8_t mask)
+{
+    if (mask) {
+        ds_put_format(s, "%s=%#"PRIx8, name, value);
+        if (mask != UINT8_MAX) {
+            ds_put_format(s, "/%#"PRIx8, mask);
+        }
+        ds_put_char(s, ',');
+    }
+}
+
+static void
 format_be16_masked(struct ds *s, const char *name,
                    ovs_be16 value, ovs_be16 mask)
 {
@@ -959,7 +990,7 @@ match_format(const struct match *match, struct ds *s, unsigned int priority)
 
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 27);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
 
     if (priority != OFP_DEFAULT_PRIORITY) {
         ds_put_format(s, "priority=%u,", priority);
@@ -979,6 +1010,13 @@ match_format(const struct match *match, struct ds *s, unsigned int priority)
 
     if (wc->masks.skb_priority) {
         ds_put_format(s, "skb_priority=%#"PRIx32",", f->skb_priority);
+    }
+
+    if (wc->masks.conn_state) {
+        /* xxx Spell out the flags? To be prettier? */
+        /* xxx If pretty print, remove format_uint8_masked(). */
+        format_uint8_masked(s, "conn_state", f->conn_state,
+                            wc->masks.conn_state);
     }
 
     if (wc->masks.dl_type) {

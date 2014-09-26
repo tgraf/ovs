@@ -265,8 +265,16 @@ void ovs_dp_process_packet(struct sk_buff *skb, struct sw_flow_key *key)
 	stats = this_cpu_ptr(dp->stats_percpu);
 
 	/* Look up flow. */
+	/* xxx Are we better off resetting the SKB hash, since we've changed
+	 * xxx the value of a field?  Will we always have collision for packets
+	 * xxx that only vary based on the conn_state? */
+#if 0
 	flow = ovs_flow_tbl_lookup_stats(&dp->table, key, skb_get_hash(skb),
 					 &n_mask_hit);
+#else
+	/* xxx Gross, clearing hash. */
+	flow = ovs_flow_tbl_lookup_stats(&dp->table, key, 0, &n_mask_hit);
+#endif
 	if (unlikely(!flow)) {
 		struct dp_upcall_info upcall;
 		int error;
@@ -527,6 +535,7 @@ static int ovs_packet_cmd_execute(struct sk_buff *skb, struct genl_info *info)
 	struct datapath *dp;
 	struct ethhdr *eth;
 	struct vport *input_vport;
+	struct net *net = sock_net(skb->sk);
 	int len;
 	int err;
 
@@ -566,7 +575,7 @@ static int ovs_packet_cmd_execute(struct sk_buff *skb, struct genl_info *info)
 	if (err)
 		goto err_flow_free;
 
-	err = ovs_nla_copy_actions(a[OVS_PACKET_ATTR_ACTIONS],
+	err = ovs_nla_copy_actions(net, a[OVS_PACKET_ATTR_ACTIONS],
 				   &flow->key, &acts);
 	if (err)
 		goto err_flow_free;
@@ -858,6 +867,7 @@ static int ovs_flow_cmd_new(struct sk_buff *skb, struct genl_info *info)
 	struct datapath *dp;
 	struct sw_flow_actions *acts;
 	struct sw_flow_match match;
+	struct net *net = sock_net(skb->sk);
 	int error;
 
 	/* Must have key and actions. */
@@ -889,7 +899,7 @@ static int ovs_flow_cmd_new(struct sk_buff *skb, struct genl_info *info)
 	ovs_flow_mask_key(&new_flow->key, &new_flow->unmasked_key, &mask);
 
 	/* Validate actions. */
-	error = ovs_nla_copy_actions(a[OVS_FLOW_ATTR_ACTIONS], &new_flow->key,
+	error = ovs_nla_copy_actions(net, a[OVS_FLOW_ATTR_ACTIONS], &new_flow->key,
 				     &acts);
 	if (error) {
 		OVS_NLERR("Flow actions may not be safe on all matching packets.\n");
@@ -986,7 +996,8 @@ error:
 }
 
 /* Factor out action copy to avoid "Wframe-larger-than=1024" warning. */
-static struct sw_flow_actions *get_flow_actions(const struct nlattr *a,
+static struct sw_flow_actions *get_flow_actions(struct net *net,
+						const struct nlattr *a,
 						const struct sw_flow_key *key,
 						const struct sw_flow_mask *mask)
 {
@@ -995,7 +1006,7 @@ static struct sw_flow_actions *get_flow_actions(const struct nlattr *a,
 	int error;
 
 	ovs_flow_mask_key(&masked_key, key, mask);
-	error = ovs_nla_copy_actions(a, &masked_key, &acts);
+	error = ovs_nla_copy_actions(net, a, &masked_key, &acts);
 	if (error) {
 		OVS_NLERR("Actions may not be safe on all matching packets.\n");
 		return ERR_PTR(error);
@@ -1015,6 +1026,7 @@ static int ovs_flow_cmd_set(struct sk_buff *skb, struct genl_info *info)
 	struct datapath *dp;
 	struct sw_flow_actions *old_acts = NULL, *acts = NULL;
 	struct sw_flow_match match;
+	struct net *net = sock_net(skb->sk);
 	int error;
 
 	/* Extract key. */
@@ -1032,7 +1044,7 @@ static int ovs_flow_cmd_set(struct sk_buff *skb, struct genl_info *info)
 
 	/* Validate actions. */
 	if (a[OVS_FLOW_ATTR_ACTIONS]) {
-		acts = get_flow_actions(a[OVS_FLOW_ATTR_ACTIONS], &key, &mask);
+		acts = get_flow_actions(net, a[OVS_FLOW_ATTR_ACTIONS], &key, &mask);
 		if (IS_ERR(acts)) {
 			error = PTR_ERR(acts);
 			goto error;

@@ -617,7 +617,7 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
     int match_len;
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 27);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
 
     /* Metadata. */
     if (match->wc.masks.dp_hash) {
@@ -740,6 +740,10 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
     /* Mark. */
     nxm_put_32m(b, mf_oxm_header(MFF_PKT_MARK, oxm), htonl(flow->pkt_mark),
                 htonl(match->wc.masks.pkt_mark));
+
+    /* Connection state. */
+    nxm_put_8m(b, NXM_NX_CONN_STATE, flow->conn_state,
+               match->wc.masks.conn_state);
 
     /* OpenFlow 1.1+ Metadata. */
     nxm_put_64m(b, mf_oxm_header(MFF_METADATA, oxm),

@@ -38,7 +38,7 @@ struct pkt_metadata;
 /* This sequence number should be incremented whenever anything involving flows
  * or the wildcarding of flows changes.  This will cause build assertion
  * failures in places which likely need to be updated. */
-#define FLOW_WC_SEQ 27
+#define FLOW_WC_SEQ 28
 
 /* Number of Open vSwitch extension 32-bit registers. */
 #define FLOW_N_REGS 8
@@ -124,7 +124,8 @@ struct flow {
     uint8_t arp_tha[6];         /* ARP/ND target hardware address. */
     struct in6_addr nd_target;  /* IPv6 neighbor discovery (ND) target. */
     ovs_be16 tcp_flags;         /* TCP flags. With L3 to avoid matching L4. */
-    ovs_be16 pad;               /* Padding. */
+    uint8_t conn_state ;        /* Connection state. */
+    uint8_t pad;                /* Padding. */
 
     /* L4 */
     ovs_be16 tp_src;            /* TCP/UDP/SCTP source port. */
@@ -141,7 +142,7 @@ BUILD_ASSERT_DECL(sizeof(struct flow) % 4 == 0);
 /* Remember to update FLOW_WC_SEQ when changing 'struct flow'. */
 BUILD_ASSERT_DECL(offsetof(struct flow, dp_hash) + sizeof(uint32_t)
                   == sizeof(struct flow_tnl) + 176
-                  && FLOW_WC_SEQ == 27);
+                  && FLOW_WC_SEQ == 28);
 
 /* Incremental points at which flow classification may be performed in
  * segments.
@@ -174,6 +175,7 @@ struct flow_metadata {
     ovs_be64 metadata;               /* OpenFlow 1.1+ metadata field. */
     uint32_t regs[FLOW_N_REGS];      /* Registers. */
     uint32_t pkt_mark;               /* Packet mark. */
+    uint8_t conn_state;              /* Connection state. */
     ofp_port_t in_port;              /* OpenFlow port or zero. */
 };
 
@@ -669,6 +671,7 @@ pkt_metadata_from_flow(const struct flow *flow)
     md.skb_priority = flow->skb_priority;
     md.pkt_mark = flow->pkt_mark;
     md.in_port = flow->in_port;
+    md.conn_state = flow->conn_state;
 
     return md;
 }

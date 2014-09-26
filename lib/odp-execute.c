@@ -198,6 +198,10 @@ odp_execute_set_action(struct dpif_packet *packet, const struct nlattr *a,
         md->pkt_mark = nl_attr_get_u32(a);
         break;
 
+    case OVS_KEY_ATTR_CONN_STATE:
+        md->conn_state = nl_attr_get_u8(a);
+        break;
+
     case OVS_KEY_ATTR_ETHERNET:
         odp_eth_set_addrs(&packet->ofpbuf, nl_attr_get(a), NULL);
         break;
@@ -285,6 +289,11 @@ odp_execute_masked_set_action(struct dpif_packet *packet,
     case OVS_KEY_ATTR_SKB_MARK:
         md->pkt_mark = nl_attr_get_u32(a)
             | (md->pkt_mark & ~*get_mask(a, uint32_t));
+        break;
+
+    case OVS_KEY_ATTR_CONN_STATE:
+        md->conn_state = nl_attr_get_u8(a)
+			| (md->conn_state & ~*get_mask(a, uint8_t));
         break;
 
     case OVS_KEY_ATTR_ETHERNET:
@@ -517,6 +526,10 @@ odp_execute_actions__(void *dp, struct dpif_packet **packets, int cnt,
                                    more_actions ||
                                    left > NLA_ALIGN(a->nla_len));
             }
+            break;
+
+        case OVS_ACTION_ATTR_CONNTRACK:
+            /* xxx I don't think there's anything we can do here. */
             break;
 
         case OVS_ACTION_ATTR_UNSPEC:

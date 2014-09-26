@@ -207,6 +207,18 @@ const struct mf_field mf_fields[MFF_N_IDS] = {
         OFPUTIL_P_NXM_OXM_ANY,
         OFPUTIL_P_NXM_OXM_ANY,
         -1,
+    }, {
+        MFF_CONN_STATE, "conn_state", NULL,
+        MF_FIELD_SIZES(u8),
+        MFM_FULLY,
+        MFS_HEXADECIMAL,
+        MFP_NONE,
+        true,
+        NXM_NX_CONN_STATE, "NXM_NX_CONN_STATE",
+        NXM_NX_CONN_STATE, "NXM_NX_CONN_STATE", 0,
+        OFPUTIL_P_NXM_OXM_ANY,
+        OFPUTIL_P_NXM_OXM_ANY,
+        -1,
     },
 
 #define REGISTER(IDX)                           \
@@ -943,6 +955,8 @@ mf_is_all_wild(const struct mf_field *mf, const struct flow_wildcards *wc)
         return !wc->masks.skb_priority;
     case MFF_PKT_MARK:
         return !wc->masks.pkt_mark;
+    case MFF_CONN_STATE:
+        return !wc->masks.conn_state;
     CASE_MFF_REGS:
         return !wc->masks.regs[mf->id - MFF_REG0];
     CASE_MFF_XREGS:
@@ -1184,6 +1198,7 @@ mf_is_value_valid(const struct mf_field *mf, const union mf_value *value)
     case MFF_IN_PORT:
     case MFF_SKB_PRIORITY:
     case MFF_PKT_MARK:
+    case MFF_CONN_STATE:
     CASE_MFF_REGS:
     CASE_MFF_XREGS:
     case MFF_ETH_SRC:
@@ -1310,6 +1325,10 @@ mf_get_value(const struct mf_field *mf, const struct flow *flow,
 
     case MFF_PKT_MARK:
         value->be32 = htonl(flow->pkt_mark);
+        break;
+
+    case MFF_CONN_STATE:
+        value->u8 = flow->conn_state;
         break;
 
     CASE_MFF_REGS:
@@ -1516,6 +1535,10 @@ mf_set_value(const struct mf_field *mf,
 
     case MFF_PKT_MARK:
         match_set_pkt_mark(match, ntohl(value->be32));
+        break;
+
+    case MFF_CONN_STATE:
+        match_set_conn_state(match, value->u8);
         break;
 
     CASE_MFF_REGS:
@@ -1741,6 +1764,10 @@ mf_set_flow_value(const struct mf_field *mf,
         flow->pkt_mark = ntohl(value->be32);
         break;
 
+    case MFF_CONN_STATE:
+        flow->conn_state = value->u8;
+        break;
+
     CASE_MFF_REGS:
         flow->regs[mf->id - MFF_REG0] = ntohl(value->be32);
         break;
@@ -1960,6 +1987,11 @@ mf_set_wild(const struct mf_field *mf, struct match *match)
     case MFF_PKT_MARK:
         match->flow.pkt_mark = 0;
         match->wc.masks.pkt_mark = 0;
+        break;
+
+    case MFF_CONN_STATE:
+        match->flow.conn_state = 0;
+        match->wc.masks.conn_state = 0;
         break;
 
     CASE_MFF_REGS:
@@ -2201,6 +2233,10 @@ mf_set(const struct mf_field *mf,
     case MFF_PKT_MARK:
         match_set_pkt_mark_masked(match, ntohl(value->be32),
                                   ntohl(mask->be32));
+        break;
+
+    case MFF_CONN_STATE:
+        match_set_conn_state_masked(match, value->u8, mask->u8);
         break;
 
     case MFF_ETH_DST:

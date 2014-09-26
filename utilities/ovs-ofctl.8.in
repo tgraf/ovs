@@ -1108,6 +1108,26 @@ system components in order to facilitate interaction between subsystems.
 On Linux this corresponds to the skb mark but the exact implementation is
 platform-dependent.
 .
+.IP \fBconn_state=\fIvalue\fR[\fB/\fImask\fR]
+Matches packet connection state \fIvalue\fR either exactly or with optional
+\fImask\fR.  The following flags are defined:
+.RS
+.IP \fB0x80\fR
+Connection tracking has occurred.
+.IP \fB0x40\fR
+The flow did not initiate the connection.
+.RE
+.IP
+The following values describe the state of the connection:
+.RS
+.IP \fB0x01\fR
+This is the beginning of a new connection.
+.IP \fB0x02\fR
+This is part of an already existing connection.
+.IP \fB0x04\fR
+This is a new connection that is "expected".
+.RE
+.
 .PP
 Defining IPv6 flows (those with \fBdl_type\fR equal to 0x86dd) requires
 support for NXM.  The following shorthand notations are available for

@@ -105,6 +105,7 @@
     OFPACT(NOTE,            ofpact_note,        data, "note")           \
     OFPACT(EXIT,            ofpact_null,        ofpact, "exit")         \
     OFPACT(SAMPLE,          ofpact_sample,      ofpact, "sample")       \
+    OFPACT(CONNTRACK,       ofpact_conntrack,   ofpact, "conntrack")    \
                                                                         \
     /* Instructions. */                                                 \
     OFPACT(METER,           ofpact_meter,       ofpact, "meter")        \
@@ -471,6 +472,23 @@ struct ofpact_nest {
 BUILD_ASSERT_DECL(offsetof(struct ofpact_nest, actions) % OFPACT_ALIGNTO == 0);
 BUILD_ASSERT_DECL(offsetof(struct ofpact_nest, actions)
                   == sizeof(struct ofpact_nest));
+
+/* Bits for 'flags' in struct nx_action_conntrack.
+ *
+ * If NX_CONNTRACK_F_RECIRC is set, then the packet will be recirculated
+ * through the datapath after running through the connection tracker. */
+enum nx_conntrack_flags {
+    NX_CONNTRACK_F_RECIRC = 1 << 0
+};
+
+/* OFPACT_CONNTRACK.
+ *
+ * Used for NXAST_CONNTRACK. */
+struct ofpact_conntrack {
+    struct ofpact ofpact;
+    uint16_t flags;
+    uint16_t zone;
+};
 
 static inline size_t
 ofpact_nest_get_action_len(const struct ofpact_nest *on)
