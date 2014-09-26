@@ -33,6 +33,8 @@
 #include <net/checksum.h>
 #include <net/dsfield.h>
 #include <net/netfilter/nf_conntrack_core.h>
+#include <net/netfilter/nf_nat_core.h>
+#include <net/netfilter/nf_nat_l3proto.h>
 #include <net/sctp/checksum.h>
 
 #include "datapath.h"
@@ -782,6 +784,100 @@ static int conntrack(struct datapath *dp, struct sk_buff *skb,
 	return 0;
 }
 
+static int ovs_nat_handle_ct_new(struct nf_conn *ct, struct ovs_nat_info *info)
+{
+	int err;
+
+	/* Seen it before?  This can happen for loopback, retrans,
+	 * or local packets.
+	 */
+	if (nf_nat_initialized(ct, info->type))
+		return 0;
+
+	if (info->range.flags & NF_NAT_RANGE_MAP_IPS) {
+		/* Action is set up to establish a new mapping */
+		err = nf_nat_setup_info(ct, &info->range, info->type);
+	} else {
+		/* Force range to this IP; let proto decide mapping for
+		 * per-proto parts (hence not IP_NAT_RANGE_PROTO_SPECIFIED).
+		 * Use reply in case it's already been mangled (eg local
+		 * packet).
+		 */
+		union nf_inet_addr ip =
+			(info->type == NF_NAT_MANIP_SRC ?
+			ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3 :
+			ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3);
+
+		struct nf_nat_range range = {
+			.flags		= NF_NAT_RANGE_MAP_IPS,
+			.min_addr	= ip,
+			.max_addr	= ip,
+		};
+
+		err = nf_nat_setup_info(ct, &range, info->type);
+	}
+
+	return err;
+}
+
+static int ovs_nat(struct sk_buff *skb, struct ovs_nat_info *info)
+{
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn_nat *nat;
+	struct nf_conn *ct;
+	int hooknum, nh_off, err;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct || nf_ct_is_untracked(ct)) {
+		/* A NAT action should come with an approporiate ct_state filter. */
+		return 0;
+	}
+
+	nat = nf_ct_nat_ext_add(ct);
+	if (nat == NULL)
+		return 0;
+
+	nh_off = skb_network_offset(skb);
+	skb_pull(skb, nh_off);
+	/* FIXME: COW */
+
+	if (info->type == NF_NAT_MANIP_SRC)
+		hooknum = NF_INET_LOCAL_IN;
+	else
+		hooknum = NF_INET_LOCAL_OUT;
+
+	switch (ctinfo) {
+	case IP_CT_RELATED:
+	case IP_CT_RELATED_REPLY:
+		/* FIXME: Handle ICMP, see nf_nat_ipv4_fn() */
+		if (ip_hdr(skb)->protocol == IPPROTO_ICMP) {
+			if (!nf_nat_icmp_reply_translation(skb, ct, ctinfo, hooknum))
+				return -EINVAL;
+			else
+				return 0;
+		}
+		/* Fall thru... (Only ICMPs can be IP_CT_IS_REPLY) */
+	case IP_CT_NEW:
+		if (ovs_nat_handle_ct_new(ct, info) != NF_ACCEPT) {
+			err = -EINVAL;
+			goto push;
+		}
+		break;
+
+	default:
+		WARN_ON(ctinfo != IP_CT_ESTABLISHED &&
+			ctinfo != IP_CT_ESTABLISHED_REPLY);
+		err = -EINVAL;
+		goto push;
+	}
+
+	err = nf_nat_packet(ct, ctinfo, hooknum, skb);
+push:
+	skb_push(skb, nh_off);
+
+	return err;
+}
+
 static int execute_set_action(struct sk_buff *skb, struct sw_flow_key *key,
 			      const struct nlattr *nested_attr)
 {
@@ -955,6 +1051,10 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 
 		case OVS_ACTION_ATTR_CONNTRACK:
 			err = conntrack(dp, skb, key, nla_data(a));
+			break;
+
+		case OVS_ACTION_ATTR_NAT:
+			err = ovs_nat(skb, nla_data(a));
 			break;
 		}
 

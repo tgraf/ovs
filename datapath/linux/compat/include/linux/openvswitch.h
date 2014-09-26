@@ -592,6 +592,57 @@ enum ovs_conntrack_attr {
 #define OVS_CT_ATTR_MAX (__OVS_CT_ATTR_MAX - 1)
 
 /**
+ * enum ovs_nat_type - Supported NAT modes
+ */
+enum ovs_nat_type {
+	OVS_NAT_TYPE_SRC,
+	OVS_NAT_TYPE_DST,
+	__OVS_NAT_TYPE_MAX,
+};
+
+#define OVS_NAT_TYPE_MAX (__OVS_NAT_TYPE_MAX - 1)
+
+/**
+ * enum ovs_nat_flag - Supported NAT flags
+ * @OVS_NAT_FLAG_PROTO_RAND: Pseudo random hash based L4 port mapping (MD5)
+ * @OVS_NAT_FLAG_PERSISTENT: Persistent IP mapping across reboots
+ * @OVS_NAT_FLAG_PROTO_FULL_RAND: Fully randomized L4 port mapping
+ *
+ * NOTE: The flags values must be compatible with NF_NAT_RANGE_* in
+ * <linux/netfilter/nf_nat.h>.
+ */
+enum ovs_nat_flag {
+	OVS_NAT_FLAG_PROTO_RAND		= 0x4,
+	OVS_NAT_FLAG_PERSISTENT		= 0x8,
+	OVS_NAT_FLAG_PROTO_FULL_RAND	= 0x10,
+};
+
+#define OVS_NAT_FLAGS (OVS_NAT_FLAG_PROTO_RAND | OVS_NAT_FLAG_PERSISTENT | \
+		       OVS_NAT_FLAG_PROTO_FULL_RAND)
+
+/**
+ * enum ovs_nat_attr - Attributes for %OVS_ACTION_ATTR_NAT action.
+ * @OVS_NAT_ATTR_TYPE: u32 NAT type (enum ovs_nat_type)
+ * @OVS_NAT_ATTR_IP_MIN: struct in_addr or struct in6_addr
+ * @OVS_NAT_ATTR_IP_MAX: struct in_addr or struct in6_addr
+ * @OVS_NAT_ATTR_PROTO_MIN: u16 L4 protocol specific lower boundary (port)
+ * @OVS_NAT_ATTR_PROTO_MAX: u16 L4 protocol specific upper boundary (port)
+ * @OVS_NAT_ATTR_FLAGS: u32 NAT flags (OVS_NAT_FLAG_*)
+ */
+enum ovs_nat_attr {
+	OVS_NAT_ATTR_UNSPEC,
+	OVS_NAT_ATTR_TYPE,
+	OVS_NAT_ATTR_IP_MIN,
+	OVS_NAT_ATTR_IP_MAX,
+	OVS_NAT_ATTR_PROTO_MIN,
+	OVS_NAT_ATTR_PROTO_MAX,
+	OVS_NAT_ATTR_FLAGS,
+	__OVS_NAT_ATTR_MAX,
+};
+
+#define OVS_NAT_ATTR_MAX (__OVS_NAT_ATTR_MAX - 1)
+
+/**
  * enum ovs_action_attr - Action types.
  *
  * @OVS_ACTION_ATTR_OUTPUT: Output packet to port.
@@ -623,6 +674,8 @@ enum ovs_conntrack_attr {
  * %ETH_P_MPLS if the resulting MPLS label stack is not empty.  If there
  * is no MPLS label stack, as determined by ethertype, no action is taken.
  * @OVS_ACTION_ATTR_CONNTRACK: Track the connection.
+ * @OVS_ACTION_ATTR_NAT: Perform L3 network address translation (NAT) on
+ * the packet using the Netfilter subsystem.
  *
  * Only a single header can be set with a single %OVS_ACTION_ATTR_SET.  Not all
  * fields within a header are modifiable, e.g. the IPv4 protocol and fragment
@@ -646,6 +699,7 @@ enum ovs_action_attr {
 				       * The data must be zero for the unmasked
 				       * bits. */
 	OVS_ACTION_ATTR_CONNTRACK,    /* One nested OVS_CT_ATTR_* */
+	OVS_ACTION_ATTR_NAT,          /* Nested OVS_NAT_ATTR_* */
 	__OVS_ACTION_ATTR_MAX
 };
 

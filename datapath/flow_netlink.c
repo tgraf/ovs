@@ -43,6 +43,7 @@
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
 #include <linux/rculist.h>
+#include <linux/netfilter/nf_nat.h>
 #include <net/geneve.h>
 #include <net/ip.h>
 #include <net/ip_tunnels.h>
@@ -1806,6 +1807,106 @@ static int validate_userspace(const struct nlattr *attr)
 	return 0;
 }
 
+static int validate_and_copy_nat(const struct nlattr *attr,
+				const struct sw_flow_key *key,
+				struct sw_flow_actions **sfa)
+{
+	struct ovs_nat_info nat_info;
+	struct nlattr *a;
+	int rem;
+
+	BUILD_BUG_ON(OVS_NAT_FLAG_PROTO_RAND != NF_NAT_RANGE_PROTO_RANDOM);
+	BUILD_BUG_ON(OVS_NAT_FLAG_PERSISTENT != NF_NAT_RANGE_PERSISTENT);
+	BUILD_BUG_ON(OVS_NAT_FLAG_PROTO_FULL_RAND != NF_NAT_RANGE_PROTO_RANDOM_FULLY);
+
+	memset(&nat_info, 0, sizeof(nat_info));
+
+	nla_for_each_nested(a, attr, rem) {
+		static const u32 ovs_nat_attr_lens[OVS_NAT_ATTR_MAX + 1] = {
+			[OVS_NAT_ATTR_TYPE] = sizeof(u32),
+			[OVS_NAT_ATTR_IP_MIN] = -1,
+			[OVS_NAT_ATTR_IP_MAX] = -1,
+			[OVS_NAT_ATTR_PROTO_MIN] = sizeof(u16),
+			[OVS_NAT_ATTR_PROTO_MAX] = sizeof(u16),
+			[OVS_NAT_ATTR_FLAGS] = sizeof(u32),
+		};
+		int type = nla_type(a);
+
+		if (type > OVS_NAT_ATTR_MAX) {
+			OVS_NLERR("Unknown nat attribute (type=%d, max=%d).\n",
+			type, OVS_NAT_ATTR_MAX);
+			return -EINVAL;
+		}
+
+		if (ovs_nat_attr_lens[type] != nla_len(a) &&
+		    ovs_nat_attr_lens[type] != -1) {
+			OVS_NLERR("NAT attribute type has unexpected "
+				  " length (type=%d, length=%d, expected=%d).\n",
+				  type, nla_len(a), ovs_nat_attr_lens[type]);
+			return -EINVAL;
+		}
+
+		switch (type) {
+		case OVS_NAT_ATTR_TYPE:
+			nat_info.type = nla_get_u32(a);
+			if (nat_info.type > OVS_NAT_TYPE_MAX) {
+				OVS_NLERR("NAT type %d out of range 0..%d\n",
+				    nat_info.type, OVS_NAT_TYPE_MAX);
+				return -ERANGE;
+			}
+			break;
+
+		case OVS_NAT_ATTR_IP_MIN:
+			if (nla_len(a) != sizeof(struct in_addr) &&
+			    nla_len(a) != sizeof(struct in6_addr)) {
+				return -ERANGE;
+			}
+
+			nla_memcpy(&nat_info.range.min_addr, a,
+				   sizeof(nat_info.range.min_addr));
+			nat_info.range.flags |= NF_NAT_RANGE_MAP_IPS;
+			break;
+
+		case OVS_NAT_ATTR_IP_MAX:
+			if (nla_len(a) != sizeof(struct in_addr) &&
+			    nla_len(a) != sizeof(struct in6_addr)) {
+				return -ERANGE;
+			}
+
+			nla_memcpy(&nat_info.range.max_addr, a,
+				   sizeof(nat_info.range.max_addr));
+			nat_info.range.flags |= NF_NAT_RANGE_MAP_IPS;
+			break;
+
+		case OVS_NAT_ATTR_PROTO_MIN:
+			nat_info.range.min_proto.all = nla_get_u16(a);
+			nat_info.range.flags |= NF_NAT_RANGE_PROTO_SPECIFIED;
+			break;
+
+		case OVS_NAT_ATTR_PROTO_MAX:
+			nat_info.range.max_proto.all = nla_get_u16(a);
+			nat_info.range.flags |= NF_NAT_RANGE_PROTO_SPECIFIED;
+			break;
+
+		case OVS_NAT_ATTR_FLAGS:
+			nat_info.range.flags |= (nla_get_u32(a) & OVS_NAT_FLAGS);
+			break;
+
+		default:
+			OVS_NLERR("Unknown nat attribute (%d).\n", type);
+			return -EINVAL;
+		}
+	}
+
+	if (rem > 0) {
+		OVS_NLERR("NAT attribute has %d unknown bytes.\n", rem);
+		return -EINVAL;
+	}
+
+	return add_action(sfa, OVS_ACTION_ATTR_NAT, &nat_info,
+			  sizeof(nat_info));
+}
+
 static int copy_action(const struct nlattr *from,
 		       struct sw_flow_actions **sfa)
 {
@@ -1845,6 +1946,7 @@ static int __ovs_nla_copy_actions(struct net *net, const struct nlattr *attr,
 			[OVS_ACTION_ATTR_SAMPLE] = (u32)-1,
 			[OVS_ACTION_ATTR_HASH] = sizeof(struct ovs_action_hash),
 			[OVS_ACTION_ATTR_CONNTRACK] = (u32)-1,
+			[OVS_ACTION_ATTR_NAT] = (u32)-1,
 		};
 		const struct ovs_action_push_vlan *vlan;
 		int type = nla_type(a);
@@ -1952,6 +2054,13 @@ static int __ovs_nla_copy_actions(struct net *net, const struct nlattr *attr,
 
 		case OVS_ACTION_ATTR_CONNTRACK:
 			err = validate_and_copy_conntrack(net, a, key, sfa);
+			if (err)
+				return err;
+			skip_copy = true;
+			break;
+
+		case OVS_ACTION_ATTR_NAT:
+			err = validate_and_copy_nat(a, key, sfa);
 			if (err)
 				return err;
 			skip_copy = true;
@@ -2079,6 +2188,30 @@ static int conntrack_action_to_attr(const struct nlattr *attr, struct sk_buff *s
 	return 0;
 }
 
+static int nat_action_to_attr(const struct nlattr *attr, struct sk_buff *skb)
+{
+	struct ovs_nat_info *info;
+	struct nlattr *start;
+
+	start = nla_nest_start(skb, OVS_ACTION_ATTR_NAT);
+	if (!start)
+		return -EMSGSIZE;
+
+	info = nla_data(attr);
+
+	if (nla_put_u32(skb, OVS_NAT_ATTR_TYPE, info->type) ||
+	    nla_put_u32(skb, OVS_NAT_ATTR_IP_MIN, info->range.min_addr.ip) ||
+	    nla_put_u32(skb, OVS_NAT_ATTR_IP_MAX, info->range.max_addr.ip) ||
+	    nla_put_u16(skb, OVS_NAT_ATTR_PROTO_MIN, info->range.min_proto.all) ||
+	    nla_put_u16(skb, OVS_NAT_ATTR_PROTO_MAX, info->range.max_proto.all) ||
+	    nla_put_u32(skb, OVS_NAT_ATTR_FLAGS, info->range.flags & OVS_NAT_FLAGS))
+		return -EMSGSIZE;
+
+	nla_nest_end(skb, start);
+
+	return 0;
+}
+
 int ovs_nla_put_actions(const struct nlattr *attr, int len, struct sk_buff *skb)
 {
 	const struct nlattr *a;
@@ -2102,6 +2235,12 @@ int ovs_nla_put_actions(const struct nlattr *attr, int len, struct sk_buff *skb)
 
 		case OVS_ACTION_ATTR_CONNTRACK:
 			err = conntrack_action_to_attr(a, skb);
+			if (err)
+				return err;
+			break;
+
+		case OVS_ACTION_ATTR_NAT:
+			err = nat_action_to_attr(a, skb);
 			if (err)
 				return err;
 			break;

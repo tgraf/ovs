@@ -35,6 +35,7 @@
 #include <net/inet_ecn.h>
 #include <net/ip_tunnels.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <net/netfilter/nf_nat.h>
 
 struct sk_buff;
 
@@ -68,6 +69,11 @@ struct ovs_tunnel_info {
 					((flow_key)->tun_opts + \
 					FIELD_SIZEOF(struct sw_flow_key, tun_opts) - \
 					   opt_len)
+
+struct ovs_nat_info {
+	__u32 type;
+	struct nf_nat_range range;
+};
 
 static inline void __ovs_flow_tun_info_init(struct ovs_tunnel_info *tun_info,
 					    __be32 saddr, __be32 daddr,
