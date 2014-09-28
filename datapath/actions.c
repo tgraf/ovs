@@ -833,6 +833,8 @@ static int ovs_nat(struct sk_buff *skb, struct ovs_nat_info *info)
 		return 0;
 	}
 
+	printk("Natting with ct %p\n", ct);
+
 	nat = nf_ct_nat_ext_add(ct);
 	if (nat == NULL)
 		return 0;
@@ -846,10 +848,11 @@ static int ovs_nat(struct sk_buff *skb, struct ovs_nat_info *info)
 	else
 		hooknum = NF_INET_LOCAL_OUT;
 
+	printk("ctinfo %u\n", ctinfo);
+
 	switch (ctinfo) {
 	case IP_CT_RELATED:
 	case IP_CT_RELATED_REPLY:
-		/* FIXME: Handle ICMP, see nf_nat_ipv4_fn() */
 		if (ip_hdr(skb)->protocol == IPPROTO_ICMP) {
 			if (!nf_nat_icmp_reply_translation(skb, ct, ctinfo, hooknum))
 				return -EINVAL;
@@ -859,6 +862,7 @@ static int ovs_nat(struct sk_buff *skb, struct ovs_nat_info *info)
 		/* Fall thru... (Only ICMPs can be IP_CT_IS_REPLY) */
 	case IP_CT_NEW:
 		if (ovs_nat_handle_ct_new(ct, info) != NF_ACCEPT) {
+			printk("failed to handle ct new\n");
 			err = -EINVAL;
 			goto push;
 		}
@@ -872,6 +876,7 @@ static int ovs_nat(struct sk_buff *skb, struct ovs_nat_info *info)
 	}
 
 	err = nf_nat_packet(ct, ctinfo, hooknum, skb);
+	printk("did nat = %d\n", err);
 push:
 	skb_push(skb, nh_off);
 
