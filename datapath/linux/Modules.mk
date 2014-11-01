@@ -11,6 +11,7 @@ openvswitch_sources += \
 	linux/compat/ip_tunnels_core.c \
 	linux/compat/netdevice.c \
 	linux/compat/net_namespace.c \
+	linux/compat/nf_conntrack_core.c \
 	linux/compat/reciprocal_div.c \
 	linux/compat/skbuff-openvswitch.c \
 	linux/compat/vxlan.c	\
@@ -74,6 +75,7 @@ openvswitch_headers += \
 	linux/compat/include/net/mpls.h \
 	linux/compat/include/net/net_namespace.h \
 	linux/compat/include/net/netlink.h \
+	linux/compat/include/net/netfilter/nf_conntrack.h \
 	linux/compat/include/net/udp.h \
 	linux/compat/include/net/sock.h \
 	linux/compat/include/net/vxlan.h \
