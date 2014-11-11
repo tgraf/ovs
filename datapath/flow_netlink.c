@@ -1365,18 +1365,24 @@ static struct sw_flow_actions *nla_alloc_flow_actions(int size, bool log)
 	return sfa;
 }
 
-/* RCU callback used by ovs_nla_free_flow_actions. */
+void ovs_nla_free_flow_actions(struct sw_flow_actions *sf_acts)
+{
+	kfree(sf_acts);
+}
+
+/* RCU callback used by ovs_nla_free_flow_actions_rcu. */
 static void rcu_free_acts_callback(struct rcu_head *rcu)
 {
 	struct sw_flow_actions *sf_acts = container_of(rcu,
 			struct sw_flow_actions, rcu);
-	kfree(sf_acts);
+
+	ovs_nla_free_flow_actions(sf_acts);
 }
 
 /* Schedules 'sf_acts' to be freed after the next RCU grace period.
  * The caller must hold rcu_read_lock for this to be sensible.
  */
-void ovs_nla_free_flow_actions(struct sw_flow_actions *sf_acts)
+void ovs_nla_free_flow_actions_rcu(struct sw_flow_actions *sf_acts)
 {
 	call_rcu(&sf_acts->rcu, rcu_free_acts_callback);
 }
@@ -1929,7 +1935,7 @@ int ovs_nla_copy_actions(const struct nlattr *attr,
 	err = __ovs_nla_copy_actions(attr, key, 0, sfa, key->eth.type,
 				     key->eth.tci, log);
 	if (err)
-		kfree(*sfa);
+		ovs_nla_free_flow_actions(*sfa);
 
 	return err;
 }

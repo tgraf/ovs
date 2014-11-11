@@ -45,6 +45,7 @@
 #include <net/ndisc.h>
 
 #include "vlan.h"
+#include "flow_netlink.h"
 
 #define TBL_MIN_BUCKETS		1024
 #define MASK_ARRAY_SIZE_MIN	16
@@ -146,7 +147,7 @@ static void flow_free(struct sw_flow *flow)
 {
 	int node;
 
-	kfree(rcu_dereference_raw(flow->sf_acts));
+	ovs_nla_free_flow_actions(rcu_dereference_raw(flow->sf_acts));
 	for_each_node(node)
 		if (flow->stats[node])
 			kmem_cache_free(flow_stats_cache,
