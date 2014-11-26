@@ -25,6 +25,7 @@
 #include "ofp-errors.h"
 #include "packets.h"
 #include "util.h"
+#include "ofp-util-protocol.h"
 
 struct ds;
 struct match;
