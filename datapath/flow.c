@@ -44,7 +44,9 @@
 #include <net/ipv6.h>
 #include <net/mpls.h>
 #include <net/ndisc.h>
-#include <linux/netfilter/nf_conntrack_common.h>
+
+/* xxx Don't add the common code in the earlier one.  Just use this. */
+#include <net/netfilter/nf_conntrack_core.h>
 
 #include "datapath.h"
 #include "flow.h"
@@ -709,6 +711,9 @@ u8 ovs_map_nfctinfo(struct sk_buff *skb)
 int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 			 struct sk_buff *skb, struct sw_flow_key *key)
 {
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+
 	/* Extract metadata from packet. */
 	if (tun_info) {
 		memcpy(&key->tun_key, &tun_info->tunnel, sizeof(key->tun_key));
@@ -735,6 +740,13 @@ int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 	key->phy.conn_state = 0;
 	key->ovs_flow_hash = 0;
 	key->recirc_id = 0;
+
+#if defined(CONFIG_NF_CONNTRACK_MARK)
+	ct = nf_ct_get(skb, &ctinfo);
+	key->phy.conn_mark = ct ? ct->mark : 0;
+#else
+	key->phy.conn_mark = 0;
+#endif
 
 	return key_extract(skb, key);
 }

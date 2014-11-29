@@ -524,6 +524,23 @@ enum OVS_PACKED_ENUM mf_field_id {
      */
     MFF_CONN_STATE,
 
+    /* "conn_mark".
+     *
+     * Connection tracking mark.  The mark is carried with the
+     * connection tracking state.  On Linux this corresponds to the
+     * nf_conn's "mark" memeber but the exact exact implementation is
+     * platform-dependent.
+     *
+     * Type: be32.
+     * Maskable: bitwise.
+     * Formatting: hexadecimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: NXM_NX_CONN_MARK(38) since v2.4.
+     * OXM: none.
+     */
+    MFF_CONN_MARK,
+
 #if FLOW_N_REGS == 8
     /* "reg<N>".
      *

@@ -206,6 +206,10 @@ odp_execute_set_action(struct dpif_packet *packet, const struct nlattr *a)
         md->conn_state = nl_attr_get_u8(a);
         break;
 
+    case OVS_KEY_ATTR_CONN_MARK:
+        md->conn_mark = nl_attr_get_u32(a);
+        break;
+
     case OVS_KEY_ATTR_ETHERNET:
         odp_eth_set_addrs(&packet->ofpbuf, nl_attr_get(a), NULL);
         break;
@@ -361,6 +365,11 @@ odp_execute_masked_set_action(struct dpif_packet *packet,
     case OVS_KEY_ATTR_RECIRC_ID:
         md->recirc_id = nl_attr_get_u32(a)
             | (md->recirc_id & ~*get_mask(a, uint32_t));
+        break;
+
+    case OVS_KEY_ATTR_CONN_MARK:
+        md->conn_mark = nl_attr_get_u32(a)
+            | (md->conn_mark & ~*get_mask(a, uint32_t));
         break;
 
     case OVS_KEY_ATTR_TUNNEL:    /* Masked data not supported for tunnel. */

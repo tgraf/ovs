@@ -330,6 +330,7 @@ enum ovs_key_attr {
 				 * The implementation may restrict
 				 * the accepted length of the array. */
 	OVS_KEY_ATTR_CONN_STATE,/* u8 conn state */
+	OVS_KEY_ATTR_CONN_MARK,  /* u32 conn mark */
 
 #ifdef __KERNEL__
 	/* Only used within kernel data path. */

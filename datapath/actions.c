@@ -224,6 +224,27 @@ static int set_mpls(struct sk_buff *skb, struct sw_flow_key *key,
 	return 0;
 }
 
+static int set_conn_mark(struct sk_buff *skb, struct sw_flow_key *key,
+		    u32 conn_mark)
+{
+#if defined(CONFIG_NF_CONNTRACK_MARK)
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+
+	ct = nf_ct_get(skb, &ctinfo);
+		if (ct == NULL)
+			return 0;
+
+	if (ct->mark != conn_mark) {
+		ct->mark = conn_mark;
+		nf_conntrack_event_cache(IPCT_MARK, ct);
+		key->phy.conn_mark = conn_mark;
+	}
+#endif
+
+	return 0;
+}
+
 /* remove VLAN header from packet and update csum accordingly. */
 static int __pop_vlan_tci(struct sk_buff *skb, __be16 *current_tci)
 {
@@ -782,6 +803,21 @@ static int conntrack(struct sk_buff *skb, struct sw_flow_key *key,
 
 	key->phy.conn_state = ovs_map_nfctinfo(skb);
 
+#if defined(CONFIG_NF_CONNTRACK_MARK)
+	{
+		/* xxx This is hacky as shit.  This should be set at extract.
+		* xxx The problem is that at extract, it's a new SKB, so it
+		* xxx doesn't have nfct info; would need to do a lookup. */
+		struct nf_conn *ct2;
+		enum ip_conntrack_info ctinfo2;
+		ct2 = nf_ct_get(skb, &ctinfo2);
+
+        key->phy.conn_mark = ct2 ? ct2->mark : 0;
+	}
+#else
+	key->phy.conn_mark = 0;
+#endif
+
 	return 0;
 }
 
@@ -831,6 +867,10 @@ static int execute_set_action(struct sk_buff *skb, struct sw_flow_key *key,
 
 	case OVS_KEY_ATTR_MPLS:
 		err = set_mpls(skb, key, nla_data(nested_attr));
+		break;
+
+	case OVS_KEY_ATTR_CONN_MARK:
+		err = set_conn_mark(skb, key, nla_get_u32(nested_attr));
 		break;
 	}
 

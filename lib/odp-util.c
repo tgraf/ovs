@@ -111,6 +111,7 @@ ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
     case OVS_KEY_ATTR_PRIORITY: return "skb_priority";
     case OVS_KEY_ATTR_SKB_MARK: return "skb_mark";
     case OVS_KEY_ATTR_CONN_STATE: return "conn_state";
+    case OVS_KEY_ATTR_CONN_MARK: return "conn_mark";
     case OVS_KEY_ATTR_TUNNEL: return "tunnel";
     case OVS_KEY_ATTR_IN_PORT: return "in_port";
     case OVS_KEY_ATTR_ETHERNET: return "eth";
@@ -1237,6 +1238,7 @@ odp_flow_key_attr_len(uint16_t type)
     case OVS_KEY_ATTR_DP_HASH: return 4;
     case OVS_KEY_ATTR_RECIRC_ID: return 4;
     case OVS_KEY_ATTR_CONN_STATE: return 1;
+    case OVS_KEY_ATTR_CONN_MARK: return 4;
     case OVS_KEY_ATTR_TUNNEL: return -2;
     case OVS_KEY_ATTR_IN_PORT: return 4;
     case OVS_KEY_ATTR_ETHERNET: return sizeof(struct ovs_key_ethernet);
@@ -1820,6 +1822,7 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
     case OVS_KEY_ATTR_SKB_MARK:
     case OVS_KEY_ATTR_DP_HASH:
     case OVS_KEY_ATTR_RECIRC_ID:
+    case OVS_KEY_ATTR_CONN_MARK:
         ds_put_format(ds, "%#"PRIx32, nl_attr_get_u32(a));
         if (!is_exact) {
             ds_put_format(ds, "/%#"PRIx32, nl_attr_get_u32(ma));
@@ -2720,6 +2723,7 @@ parse_odp_key_mask_attr(const char *s, const struct simap *port_names,
     SCAN_SINGLE("dp_hash(", uint32_t, u32, OVS_KEY_ATTR_DP_HASH);
 
     SCAN_SINGLE("conn_state(", uint8_t, conn_state, OVS_KEY_ATTR_CONN_STATE);
+    SCAN_SINGLE("conn_mark(", uint32_t, u32, OVS_KEY_ATTR_CONN_MARK);
 
     SCAN_BEGIN("tunnel(", struct flow_tnl) {
         SCAN_FIELD("tun_id=", be64, tun_id);
@@ -2949,6 +2953,7 @@ odp_flow_key_from_flow__(struct ofpbuf *buf, const struct flow *flow,
 
     nl_msg_put_u32(buf, OVS_KEY_ATTR_SKB_MARK, data->pkt_mark);
     nl_msg_put_u8(buf, OVS_KEY_ATTR_CONN_STATE, data->conn_state);
+    nl_msg_put_u32(buf, OVS_KEY_ATTR_CONN_MARK, data->conn_mark);
 
     if (recirc) {
         nl_msg_put_u32(buf, OVS_KEY_ATTR_RECIRC_ID, data->recirc_id);
@@ -3147,8 +3152,10 @@ odp_key_from_pkt_metadata(struct ofpbuf *buf, const struct pkt_metadata *md)
 
     nl_msg_put_u32(buf, OVS_KEY_ATTR_SKB_MARK, md->pkt_mark);
 #if 0
+    /* xxx Why is this commented out? */
     nl_msg_put_u8(buf, OVS_KEY_ATTR_CONN_STATE, md->conn_state);
 #endif
+    nl_msg_put_u32(buf, OVS_KEY_ATTR_CONN_MARK, md->conn_mark);
 
     /* Add an ingress port attribute if 'odp_in_port' is not the magical
      * value "ODPP_NONE". */
@@ -3197,11 +3204,16 @@ odp_key_to_pkt_metadata(const struct nlattr *key, size_t key_len,
             wanted_attrs &= ~(1u << OVS_KEY_ATTR_SKB_MARK);
             break;
 #if 0
+        /* xxx Why is this commented out? */
         case OVS_KEY_ATTR_CONN_STATE:
             md->conn_state = nl_attr_get_u8(nla);
             wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_STATE);
             break;
 #endif
+        case OVS_KEY_ATTR_CONN_MARK:
+            md->conn_mark = nl_attr_get_u32(nla);
+            wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_MARK);
+            break;
         case OVS_KEY_ATTR_TUNNEL: {
             enum odp_key_fitness res;
 
@@ -3756,6 +3768,11 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CONN_STATE)) {
         flow->conn_state = nl_attr_get_u8(attrs[OVS_KEY_ATTR_CONN_STATE]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_STATE;
+    }
+
+    if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CONN_MARK)) {
+        flow->conn_mark = nl_attr_get_u32(attrs[OVS_KEY_ATTR_CONN_MARK]);
+        expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_MARK;
     }
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_TUNNEL)) {
@@ -4399,6 +4416,25 @@ commit_set_pkt_mark_action(const struct flow *flow, struct flow *base_flow,
     }
 }
 
+static void
+commit_set_conn_mark_action(const struct flow *flow, struct flow *base_flow,
+                            struct ofpbuf *odp_actions,
+                            struct flow_wildcards *wc,
+                            bool use_masked)
+{
+    uint32_t key, mask, base;
+
+    key = flow->conn_mark;
+    base = base_flow->conn_mark;
+    mask = wc->masks.conn_mark;
+
+    if (commit(OVS_KEY_ATTR_CONN_MARK, use_masked, &key, &base, &mask,
+               sizeof key, odp_actions)) {
+        base_flow->conn_mark = base;
+        wc->masks.conn_mark = mask;
+    }
+}
+
 /* If any of the flow key data that ODP actions can modify are different in
  * 'base' and 'flow', appends ODP actions to 'odp_actions' that change the flow
  * key from 'base' into 'flow', and then changes 'base' the same way.  Does not
@@ -4422,6 +4458,7 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
     commit_vlan_action(flow->vlan_tci, base, odp_actions, wc);
     commit_set_priority_action(flow, base, odp_actions, wc, use_masked);
     commit_set_pkt_mark_action(flow, base, odp_actions, wc, use_masked);
+    commit_set_conn_mark_action(flow, base, odp_actions, wc, use_masked);
 
     return slow;
 }

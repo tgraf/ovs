@@ -4263,8 +4263,8 @@ format_SAMPLE(const struct ofpact_sample *a, struct ds *s)
  *
  * Pass traffic to the connection tracker.  If 'flags' is
  * NX_CT_F_RECIRC, traffic is recirculated back to flow table
- * with the NXM_NX_CONN_STATE and NXM_NX_CONN_STATE_W matches set.  A
- * standard "resubmit" action is not sufficient, since connection
+ * with the NXM_NX_CONN_STATE[_W] and NXM_NX_CONN_MARK[_W] matches set.
+ * A standard "resubmit" action is not sufficient, since connection
  * tracking occurs outside of the classifier.  The 'zone' argument
  * specifies a context within which the tracking is done. */
 struct nx_action_conntrack {

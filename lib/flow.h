@@ -38,7 +38,7 @@ struct pkt_metadata;
 /* This sequence number should be incremented whenever anything involving flows
  * or the wildcarding of flows changes.  This will cause build assertion
  * failures in places which likely need to be updated. */
-#define FLOW_WC_SEQ 28
+#define FLOW_WC_SEQ 29
 
 /* Number of Open vSwitch extension 32-bit registers. */
 #define FLOW_N_REGS 8
@@ -125,7 +125,8 @@ struct flow {
     uint8_t arp_sha[ETH_ADDR_LEN]; /* ARP/ND source hardware address. */
     uint8_t arp_tha[ETH_ADDR_LEN]; /* ARP/ND target hardware address. */
     struct in6_addr nd_target;  /* IPv6 neighbor discovery (ND) target. */
-    ovs_be16 tcp_flags;         /* TCP flags. With L3 to avoid matching L4. */
+    uint32_t conn_mark;         /* Connection mark. With L3 to avoid L4 match.*/
+    ovs_be16 tcp_flags;         /* TCP flags. */
     uint8_t conn_state ;        /* Connection state. */
     uint8_t pad;                /* Padding. */
 
@@ -157,8 +158,8 @@ BUILD_ASSERT_DECL(sizeof(struct flow) % 4 == 0);
 
 /* Remember to update FLOW_WC_SEQ when changing 'struct flow'. */
 BUILD_ASSERT_DECL(offsetof(struct flow, dp_hash) + sizeof(uint32_t)
-                  == sizeof(struct flow_tnl) + 180
-                  && FLOW_WC_SEQ == 28);
+                  == sizeof(struct flow_tnl) + 184
+                  && FLOW_WC_SEQ == 29);
 
 /* Incremental points at which flow classification may be performed in
  * segments.
@@ -192,6 +193,7 @@ struct flow_metadata {
     uint32_t regs[FLOW_N_REGS];      /* Registers. */
     uint32_t pkt_mark;               /* Packet mark. */
     uint8_t conn_state;              /* Connection state. */
+    uint32_t conn_mark;              /* Connection mark. */
     ofp_port_t in_port;              /* OpenFlow port or zero. */
 };
 
@@ -727,6 +729,7 @@ pkt_metadata_from_flow(const struct flow *flow)
     md.pkt_mark = flow->pkt_mark;
     md.in_port = flow->in_port;
     md.conn_state = flow->conn_state;
+    md.conn_mark = flow->conn_mark;
 
     return md;
 }

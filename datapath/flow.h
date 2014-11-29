@@ -128,6 +128,7 @@ struct sw_flow_key {
 	struct {
 		u32	priority;	/* Packet QoS priority. */
 		u32	skb_mark;	/* SKB mark. */
+		u32	conn_mark;	/* Connection mark. */
 		u16	in_port;	/* Input switch port (or DP_MAX_PORTS). */
 		u8  conn_state;	/* Connection state. */
 	} __packed phy; /* Safe when right after 'tun_key'. */

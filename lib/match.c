@@ -259,6 +259,20 @@ match_set_conn_state_masked(struct match *match, uint8_t conn_state,
 }
 
 void
+match_set_conn_mark(struct match *match, uint32_t conn_mark)
+{
+    match_set_conn_mark_masked(match, conn_mark, UINT32_MAX);
+}
+
+void
+match_set_conn_mark_masked(struct match *match, uint32_t conn_mark,
+                           uint32_t mask)
+{
+    match->flow.conn_mark = conn_mark & mask;
+    match->wc.masks.conn_mark = mask;
+}
+
+void
 match_set_dl_type(struct match *match, ovs_be16 dl_type)
 {
     match->wc.masks.dl_type = OVS_BE16_MAX;
@@ -884,7 +898,7 @@ match_format(const struct match *match, struct ds *s, int priority)
 
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 29);
 
     if (priority != OFP_DEFAULT_PRIORITY) {
         ds_put_format(s, "priority=%d,", priority);
@@ -927,6 +941,8 @@ match_format(const struct match *match, struct ds *s, int priority)
         }
         ds_put_char(s, ',');
     }
+
+    format_uint32_masked(s, "conn_mark", f->conn_mark, wc->masks.conn_mark);
 
     if (wc->masks.dl_type) {
         skip_type = true;

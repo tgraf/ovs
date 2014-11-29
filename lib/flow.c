@@ -122,7 +122,7 @@ struct mf_ctx {
  * away.  Some GCC versions gave warnings on ALWAYS_INLINE, so these are
  * defined as macros. */
 
-#if (FLOW_WC_SEQ != 28)
+#if (FLOW_WC_SEQ != 29)
 #define MINIFLOW_ASSERT(X) ovs_assert(X)
 BUILD_MESSAGE("FLOW_WC_SEQ changed: miniflow_extract() will have runtime "
                "assertions enabled. Consider updating FLOW_WC_SEQ after "
@@ -617,6 +617,7 @@ miniflow_extract(struct ofpbuf *packet, const struct pkt_metadata *md,
     /* xxx This is hacky to get around ICMPv6 issues. */
     if ((nw_frag & FLOW_NW_FRAG_LATER) || (nw_proto != IPPROTO_ICMPV6)) {
         if (md) {
+            miniflow_push_uint32_check(mf, conn_mark, md->conn_mark);
             /* xxx Can't be use _check() version, since state may be 0 */
             miniflow_push_be32(mf, tcp_flags,
                                      BYTES_TO_BE32(0, 0, md->conn_state, 0));
@@ -681,8 +682,11 @@ miniflow_extract(struct ofpbuf *packet, const struct pkt_metadata *md,
                         miniflow_push_words(mf, nd_target, nd_target,
                                             sizeof *nd_target / 4);
                     }
+
                     /* xxx This is gross. */
                     if (md) {
+                        miniflow_push_uint32_check(mf, conn_mark,
+                                                   md->conn_mark);
                         /* xxx Can't be use _check() version, since
                          * xxx state may be 0 */
                         miniflow_push_be32(mf, tcp_flags,
@@ -735,7 +739,7 @@ flow_unwildcard_tp_ports(const struct flow *flow, struct flow_wildcards *wc)
 void
 flow_get_metadata(const struct flow *flow, struct flow_metadata *fmd)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 29);
 
     fmd->dp_hash = flow->dp_hash;
     fmd->recirc_id = flow->recirc_id;
@@ -746,6 +750,7 @@ flow_get_metadata(const struct flow *flow, struct flow_metadata *fmd)
     memcpy(fmd->regs, flow->regs, sizeof fmd->regs);
     fmd->pkt_mark = flow->pkt_mark;
     fmd->conn_state = flow->conn_state;
+    fmd->conn_mark = flow->conn_mark;
     fmd->in_port = flow->in_port.ofp_port;
 }
 
@@ -847,6 +852,9 @@ flow_format(struct ds *ds, const struct flow *flow)
     if (!flow->conn_state) {
         WC_UNMASK_FIELD(wc, conn_state);
     }
+    if (!flow->conn_mark) {
+        WC_UNMASK_FIELD(wc, conn_mark);
+    }
     for (int i = 0; i < FLOW_N_REGS; i++) {
         if (!flow->regs[i]) {
             WC_UNMASK_FIELD(wc, regs[i]);
@@ -886,7 +894,7 @@ void flow_wildcards_init_for_packet(struct flow_wildcards *wc,
     memset(&wc->masks, 0x0, sizeof wc->masks);
 
     /* Update this function whenever struct flow changes. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 29);
 
     if (flow->tunnel.ip_dst) {
         if (flow->tunnel.flags & FLOW_TNL_F_KEY) {
@@ -908,6 +916,7 @@ void flow_wildcards_init_for_packet(struct flow_wildcards *wc,
     WC_MASK_FIELD(wc, skb_priority);
     WC_MASK_FIELD(wc, pkt_mark);
     WC_MASK_FIELD(wc, conn_state);
+    WC_MASK_FIELD(wc, conn_mark);
     WC_MASK_FIELD(wc, recirc_id);
     WC_MASK_FIELD(wc, dp_hash);
     WC_MASK_FIELD(wc, in_port);
@@ -984,14 +993,15 @@ uint64_t
 flow_wc_map(const struct flow *flow)
 {
     /* Update this function whenever struct flow changes. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 29);
 
     uint64_t map = (flow->tunnel.ip_dst) ? MINIFLOW_MAP(tunnel) : 0;
 
     /* Metadata fields that can appear on packet input. */
     map |= MINIFLOW_MAP(skb_priority) | MINIFLOW_MAP(pkt_mark)
         | MINIFLOW_MAP(recirc_id) | MINIFLOW_MAP(dp_hash)
-        | MINIFLOW_MAP(conn_state) | MINIFLOW_MAP(in_port)
+        | MINIFLOW_MAP(conn_state) | MINIFLOW_MAP(conn_mark)
+        | MINIFLOW_MAP(in_port)
         | MINIFLOW_MAP(dl_dst) | MINIFLOW_MAP(dl_src)
         | MINIFLOW_MAP(dl_type) | MINIFLOW_MAP(vlan_tci);
 
@@ -1036,7 +1046,7 @@ void
 flow_wildcards_clear_non_packet_fields(struct flow_wildcards *wc)
 {
     /* Update this function whenever struct flow changes. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 28);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 29);
 
     memset(&wc->masks.metadata, 0, sizeof wc->masks.metadata);
     memset(&wc->masks.regs, 0, sizeof wc->masks.regs);
@@ -1597,7 +1607,7 @@ flow_push_mpls(struct flow *flow, int n, ovs_be16 mpls_eth_type,
         flow->mpls_lse[0] = set_mpls_lse_values(ttl, tc, 1, htonl(label));
 
         /* Clear all L3 and L4 fields. */
-        BUILD_ASSERT(FLOW_WC_SEQ == 28);
+        BUILD_ASSERT(FLOW_WC_SEQ == 29);
         memset((char *) flow + FLOW_SEGMENT_2_ENDS_AT, 0,
                sizeof(struct flow) - FLOW_SEGMENT_2_ENDS_AT);
     }
