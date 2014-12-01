@@ -51,9 +51,12 @@ struct tnl_match {
     ovs_be32 ip_dst;
     odp_port_t odp_port;
     uint32_t pkt_mark;
+    ovs_be16 ivxlan_sepg;
+    uint8_t ivxlan_flags;
     bool in_key_flow;
     bool ip_src_flow;
     bool ip_dst_flow;
+    bool ivxlan_sepg_flow;
 };
 
 struct tnl_port {
@@ -168,6 +171,8 @@ tnl_port_add__(const struct ofport_dpif *ofport, const struct netdev *netdev,
     tnl_port->match.pkt_mark = cfg->ipsec ? IPSEC_MARK : 0;
     tnl_port->match.in_key_flow = cfg->in_key_flow;
     tnl_port->match.odp_port = odp_port;
+    tnl_port->match.ivxlan_sepg_flow = cfg->ivxlan_sepg_flow;
+    tnl_port->match.ivxlan_sepg = cfg->ivxlan_sepg;
 
     map = tnl_match_map(&tnl_port->match);
     existing_port = tnl_find_exact(&tnl_port->match, *map);
@@ -548,6 +553,17 @@ tnl_find(const struct flow *flow) OVS_REQ_RDLOCK(rwlock)
                     match.ip_dst_flow = ip_dst_flow;
                     match.ip_src_flow = ip_src == IP_SRC_FLOW;
 
+                    match.ivxlan_sepg_flow = 0;
+                    match.ivxlan_sepg = flow->tunnel.ivxlan_sepg;
+
+                    tnl_port = tnl_find_exact(&match, map);
+                    if (tnl_port) {
+                        return tnl_port;
+                    }
+
+                    match.ivxlan_sepg_flow = 1;
+                    match.ivxlan_sepg = 0;
+
                     tnl_port = tnl_find_exact(&match, map);
                     if (tnl_port) {
                         return tnl_port;
@@ -595,6 +611,12 @@ tnl_match_fmt(const struct tnl_match *match, struct ds *ds)
         ds_put_format(ds, ", key=%#"PRIx64, ntohll(match->in_key));
     }
 
+    if (match->ivxlan_sepg_flow) {
+        ds_put_cstr(ds, ", ivxlan_sepg=flow");
+    } else {
+        ds_put_format(ds, ", key=%"PRIu16, ntohs(match->ivxlan_sepg));
+    }
+
     ds_put_format(ds, ", dp port=%"PRIu32, match->odp_port);
     ds_put_format(ds, ", pkt mark=%"PRIu32, match->pkt_mark);
 }
@@ -636,6 +658,13 @@ tnl_port_fmt(const struct tnl_port *tnl_port) OVS_REQ_RDLOCK(rwlock)
         } else {
             ds_put_format(&ds, "%#"PRIx64, ntohll(cfg->out_key));
         }
+    }
+
+    ds_put_cstr(&ds, ", ivxlan_sepg=");
+    if (cfg->ivxlan_sepg_flow) {
+        ds_put_cstr(&ds, "flow");
+    } else if (cfg->ivxlan_sepg) {
+        ds_put_format(&ds, "%"PRIu16, ntohs(cfg->ivxlan_sepg));
     }
 
     if (cfg->ttl_inherit) {

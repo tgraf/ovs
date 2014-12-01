@@ -289,6 +289,7 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/linux/etherdevice.h], [ether_addr_copy])
 
   OVS_GREP_IFELSE([$KSRC/include/linux/if_vlan.h], [vlan_set_encap_proto])
+  OVS_GREP_IFELSE([$KSRC/include/linux/if_vlan.h], [vlan_hwaccel_push_inside])
 
   OVS_GREP_IFELSE([$KSRC/include/linux/in.h], [ipv4_is_multicast])
   OVS_GREP_IFELSE([$KSRC/include/net/ip.h], [__ip_select_ident.*dst_entry],
@@ -366,6 +367,7 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/net/gre.h], [gre_handle_offloads])
   OVS_GREP_IFELSE([$KSRC/include/net/ip_tunnels.h], [iptunnel_xmit.*net],
                   [OVS_DEFINE([HAVE_IPTUNNEL_XMIT_NET])])
+  OVS_GREP_IFELSE([$KSRC/include/net/ip_tunnels.h], [iptunnel_handle_offloads])
   OVS_GREP_IFELSE([$KSRC/include/net/ipv6.h], [IP6_FH_F_SKIP_RH])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_get_be16])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_put_be16])
@@ -391,10 +393,14 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
                   [OVS_DEFINE([HAVE_VXLAN_XMIT_SKB_XNET_ARG])])
   OVS_GREP_IFELSE([$KSRC/include/net/udp.h], [udp_flow_src_port],
                   [OVS_DEFINE([HAVE_UDP_FLOW_SRC_PORT])])
+  OVS_GREP_IFELSE([$KSRC/include/net/udp.h], [udp_v4_check])
+  OVS_GREP_IFELSE([$KSRC/include/net/udp.h], [udp_set_csum])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [ignore_df:1],
                   [OVS_DEFINE([HAVE_IGNORE_DF_RENAME])])
   OVS_GREP_IFELSE([$KSRC/include/uapi/linux/netdevice.h], [NET_NAME_UNKNOWN],
                   [OVS_DEFINE([HAVE_NET_NAME_UNKNOWN])])
+  OVS_GREP_IFELSE([$KSRC/include/net/udp_tunnel.h], [udp_tunnel_handle_offloads])
+  OVS_GREP_IFELSE([$KSRC/include/net/udp_tunnel.h], [udp_tunnel_xmit_skb])
 
   OVS_CHECK_LOG2_H
 

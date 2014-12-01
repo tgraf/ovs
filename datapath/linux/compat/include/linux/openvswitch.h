@@ -223,6 +223,7 @@ enum ovs_vport_type {
 	OVS_VPORT_TYPE_GRE,      /* GRE tunnel. */
 	OVS_VPORT_TYPE_VXLAN,	 /* VXLAN tunnel. */
 	OVS_VPORT_TYPE_GENEVE,	 /* Geneve tunnel. */
+	OVS_VPORT_TYPE_IVXLAN,   /* iVXLAN tunnel */
 	OVS_VPORT_TYPE_GRE64 = 104, /* GRE tunnel with 64-bit keys */
 	OVS_VPORT_TYPE_LISP = 105,  /* LISP tunnel */
 	__OVS_VPORT_TYPE_MAX
@@ -279,6 +280,7 @@ enum ovs_vport_attr {
 enum {
 	OVS_TUNNEL_ATTR_UNSPEC,
 	OVS_TUNNEL_ATTR_DST_PORT, /* 16-bit UDP port, used by L4 tunnels. */
+	OVS_TUNNEL_ATTR_EPG,      /* End point group, used by ivxlan tunnels.*/
 	__OVS_TUNNEL_ATTR_MAX
 };
 
@@ -353,6 +355,7 @@ enum ovs_tunnel_key_attr {
 	OVS_TUNNEL_KEY_ATTR_GENEVE_OPTS,        /* Array of Geneve options. */
 	OVS_TUNNEL_KEY_ATTR_TP_SRC,		/* be16 src Transport Port. */
 	OVS_TUNNEL_KEY_ATTR_TP_DST,		/* be16 dst Transport Port. */
+	OVS_TUNNEL_KEY_ATTR_IVXLAN_OPTS,        /* ivxlan options struct */
 	__OVS_TUNNEL_KEY_ATTR_MAX
 };
 

@@ -922,6 +922,10 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
                 flow->tunnel.ip_src, match->wc.masks.tunnel.ip_src);
     nxm_put_32m(b, MFF_TUN_DST, oxm,
                 flow->tunnel.ip_dst, match->wc.masks.tunnel.ip_dst);
+    nxm_put_16m(b, MFF_TUN_IVXLAN_SEPG, oxm,
+                flow->tunnel.ivxlan_sepg, match->wc.masks.tunnel.ivxlan_sepg);
+    nxm_put_8m(b, MFF_TUN_IVXLAN_FLAGS, oxm,
+               flow->tunnel.ivxlan_flags, match->wc.masks.tunnel.ivxlan_flags);
 
     /* Registers. */
     if (oxm < OFP15_VERSION) {

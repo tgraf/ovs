@@ -109,6 +109,9 @@ struct netdev_tunnel_config {
     bool in_key_flow;
     ovs_be64 in_key;
 
+    bool ivxlan_sepg_flow;
+    ovs_be16 ivxlan_sepg;
+
     bool out_key_present;
     bool out_key_flow;
     ovs_be64 out_key;

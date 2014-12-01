@@ -746,6 +746,8 @@ flow_get_metadata(const struct flow *flow, struct flow_metadata *fmd)
     fmd->tun_id = flow->tunnel.tun_id;
     fmd->tun_src = flow->tunnel.ip_src;
     fmd->tun_dst = flow->tunnel.ip_dst;
+    fmd->tun_ivxlan_sepg = flow->tunnel.ivxlan_sepg;
+    fmd->tun_ivxlan_flags = flow->tunnel.ivxlan_flags;
     fmd->metadata = flow->metadata;
     memcpy(fmd->regs, flow->regs, sizeof fmd->regs);
     fmd->pkt_mark = flow->pkt_mark;

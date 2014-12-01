@@ -34,6 +34,7 @@
 #include <net/inet_ecn.h>
 #include <net/ip_tunnels.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <net/ivxlan.h>
 
 struct sk_buff;
 
@@ -47,6 +48,8 @@ struct ovs_key_ipv4_tunnel {
 	__be32 ipv4_src;
 	__be32 ipv4_dst;
 	__be16 tun_flags;
+	__be16 ivxlan_sepg;
+	u8   ivxlan_flags;
 	u8   ipv4_tos;
 	u8   ipv4_ttl;
 	__be16 tp_src;

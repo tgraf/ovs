@@ -31,12 +31,19 @@
 struct ofpbuf;
 struct ds;
 
+struct ivxlan_opts {
+    ovs_be16 sepg;
+    uint8_t flags;
+};
+
 /* Tunnel information used in flow key and metadata. */
 struct flow_tnl {
     ovs_be64 tun_id;
     ovs_be32 ip_src;
     ovs_be32 ip_dst;
     uint16_t flags;
+    uint16_t ivxlan_sepg;
+    uint8_t  ivxlan_flags;
     uint8_t ip_tos;
     uint8_t ip_ttl;
     ovs_be16 tp_src;

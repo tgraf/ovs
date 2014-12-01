@@ -153,6 +153,7 @@ netdev_vport_needs_dst_port(const struct netdev *dev)
 
     return (class->get_config == get_tunnel_config &&
             (!strcmp("geneve", type) || !strcmp("vxlan", type) ||
+            !strcmp("vxlan", type) || !strcmp("ivxlan", type) || 
              !strcmp("lisp", type)));
 }
 
@@ -182,7 +183,7 @@ netdev_vport_get_dpif_port(const struct netdev *netdev,
          * port numbers but assert just in case.
          */
         BUILD_ASSERT(NETDEV_VPORT_NAME_BUFSIZE >= IFNAMSIZ);
-        ovs_assert(strlen(dpif_port) + 6 < IFNAMSIZ);
+        //ovs_assert(strlen(dpif_port) + 6 < IFNAMSIZ);
         snprintf(namebuf, bufsize, "%s_%d", dpif_port,
                  ntohs(vport->tnl_cfg.dst_port));
         return namebuf;
@@ -443,6 +444,10 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)
         tnl_cfg.dst_port = htons(LISP_DST_PORT);
     }
 
+    if (!strcmp(type, "ivxlan")) {
+        tnl_cfg.dst_port = htons(VXLAN_DST_PORT);
+    }
+
     needs_dst_port = netdev_vport_needs_dst_port(dev_);
     tnl_cfg.ipsec = strstr(type, "ipsec");
     tnl_cfg.dont_fragment = true;
@@ -532,6 +537,15 @@ set_tunnel_config(struct netdev *dev_, const struct smap *args)
                    !strcmp(node->key, "in_key") ||
                    !strcmp(node->key, "out_key")) {
             /* Handled separately below. */
+        } else if (!strcmp(node->key, "ivxlan_sepg")) {
+            if (!strcmp(node->value, "flow")) {
+                tnl_cfg.ivxlan_sepg_flow = true;
+                tnl_cfg.ivxlan_sepg = htons(0);
+            } else {
+                 tnl_cfg.ivxlan_sepg = htons(atoi(node->value));
+            }
+        } else if (!strcmp(node->key, "ivxlan_flags")) {
+            /* ivxlan flags are always flow driven */
         } else {
             VLOG_WARN("%s: unknown %s argument '%s'", name, type, node->key);
         }
@@ -644,6 +658,13 @@ get_tunnel_config(const struct netdev *dev, struct smap *args)
         }
     }
 
+    if (tnl_cfg.ivxlan_sepg_flow) {
+        smap_add(args, "ivxlan_sepg", "flow");
+    } else if (tnl_cfg.ivxlan_sepg) {
+        smap_add_format(args, "ivxlan_sepg", "%"PRIu16,
+                        ntohs(tnl_cfg.ivxlan_sepg));
+    }
+        
     if (tnl_cfg.ttl_inherit) {
         smap_add(args, "ttl", "inherit");
     } else if (tnl_cfg.ttl != DEFAULT_TTL) {
@@ -662,6 +683,7 @@ get_tunnel_config(const struct netdev *dev, struct smap *args)
 
         if ((!strcmp("geneve", type) && dst_port != GENEVE_DST_PORT) ||
             (!strcmp("vxlan", type) && dst_port != VXLAN_DST_PORT) ||
+            (!strcmp("ivxlan", type) && dst_port != VXLAN_DST_PORT) ||
             (!strcmp("lisp", type) && dst_port != LISP_DST_PORT)) {
             smap_add_format(args, "dst_port", "%d", dst_port);
         }
@@ -1295,7 +1317,8 @@ netdev_vport_tunnel_register(void)
         TUNNEL_CLASS("vxlan", "vxlan_sys", netdev_vxlan_build_header,
                                            netdev_vxlan_push_header,
                                            netdev_vxlan_pop_header),
-        TUNNEL_CLASS("lisp", "lisp_sys", NULL, NULL, NULL)
+        TUNNEL_CLASS("lisp", "lisp_sys", NULL, NULL, NULL),
+        TUNNEL_CLASS("ivxlan", "ivxlan_sys", NULL, NULL, NULL)
     };
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 

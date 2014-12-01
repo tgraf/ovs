@@ -44,6 +44,7 @@
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ndisc.h>
+#include <net/ivxlan.h>
 #include <net/mpls.h>
 
 #include "datapath.h"
@@ -451,6 +452,7 @@ static int ipv4_tun_from_nlattr(const struct nlattr *attr,
 	int rem;
 	bool ttl = false;
 	__be16 tun_flags = 0;
+	struct ivxlan_opts *ivxlan_opts;
 
 	nla_for_each_nested(a, attr, rem) {
 		int type = nla_type(a);
@@ -468,6 +470,7 @@ static int ipv4_tun_from_nlattr(const struct nlattr *attr,
 			[OVS_TUNNEL_KEY_ATTR_TP_DST] = sizeof(u16),
 			[OVS_TUNNEL_KEY_ATTR_OAM] = 0,
 			[OVS_TUNNEL_KEY_ATTR_GENEVE_OPTS] = -1,
+			[OVS_TUNNEL_KEY_ATTR_IVXLAN_OPTS] = sizeof(struct ivxlan_opts),
 		};
 
 		if (type > OVS_TUNNEL_KEY_ATTR_MAX) {
@@ -530,6 +533,15 @@ static int ipv4_tun_from_nlattr(const struct nlattr *attr,
 
 			tun_flags |= TUNNEL_OPTIONS_PRESENT;
 			break;
+                case OVS_TUNNEL_KEY_ATTR_IVXLAN_OPTS:
+                        ivxlan_opts = (struct ivxlan_opts *)nla_data(a);
+                        if (ivxlan_opts->sepg)
+                            SW_FLOW_KEY_PUT(match, tun_key.ivxlan_sepg,
+                                            ivxlan_opts->sepg, is_mask);
+                        if (ivxlan_opts->flags)
+                            SW_FLOW_KEY_PUT(match, tun_key.ivxlan_flags,
+                                            ivxlan_opts->flags, is_mask);
+                        break;
 		default:
 			OVS_NLERR(log, "Unknown IPv4 tunnel attribute %d",
 				  type);
@@ -565,6 +577,9 @@ static int __ipv4_tun_to_nlattr(struct sk_buff *skb,
 				const struct geneve_opt *tun_opts,
 				int swkey_tun_opts_len)
 {
+        struct ivxlan_opts ivxlan_opts;
+        bool ivxlan_present = false;
+
 	if (output->tun_flags & TUNNEL_KEY &&
 	    nla_put_be64(skb, OVS_TUNNEL_KEY_ATTR_ID, output->tun_id))
 		return -EMSGSIZE;
@@ -599,6 +614,18 @@ static int __ipv4_tun_to_nlattr(struct sk_buff *skb,
 		    swkey_tun_opts_len, tun_opts))
 		return -EMSGSIZE;
 
+        memset(&ivxlan_opts, 0, sizeof(ivxlan_opts));
+        if (output->ivxlan_sepg) {
+		ivxlan_opts.sepg = output->ivxlan_sepg;
+		ivxlan_present = true;
+        }
+        if (output->ivxlan_flags) {
+		ivxlan_opts.flags = output->ivxlan_flags;
+		ivxlan_present = true;
+        }
+        if (ivxlan_present &&
+	    nla_put(skb, OVS_TUNNEL_KEY_ATTR_IVXLAN_OPTS, sizeof(ivxlan_opts), &ivxlan_opts))
+                return -EMSGSIZE;
 	return 0;
 }
 
