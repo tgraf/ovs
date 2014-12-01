@@ -696,6 +696,8 @@ flow_get_metadata(const struct flow *flow, struct flow_metadata *fmd)
     fmd->tun_id = flow->tunnel.tun_id;
     fmd->tun_src = flow->tunnel.ip_src;
     fmd->tun_dst = flow->tunnel.ip_dst;
+    fmd->tun_ivxlan_sepg = flow->tunnel.ivxlan_sepg;
+    fmd->tun_ivxlan_flags = flow->tunnel.ivxlan_flags;
     fmd->metadata = flow->metadata;
     memcpy(fmd->regs, flow->regs, sizeof fmd->regs);
     fmd->pkt_mark = flow->pkt_mark;
@@ -1853,10 +1855,10 @@ miniflow_init__(struct miniflow *dst, const struct flow *src, int n)
 {
     const uint32_t *src_u32 = (const uint32_t *) src;
     uint32_t *dst_u32 = miniflow_alloc_values(dst, n);
-    int idx;
+    uint64_t map;
 
-    MAP_FOR_EACH_INDEX(idx, dst->map) {
-        *dst_u32++ = src_u32[idx];
+    for (map = dst->map; map; map = zero_rightmost_1bit(map)) {
+        *dst_u32++ = src_u32[raw_ctz(map)];
     }
 }
 
@@ -1976,8 +1978,10 @@ miniflow_expand(const struct miniflow *src, struct flow *dst)
 static uint32_t
 miniflow_get(const struct miniflow *flow, unsigned int u32_ofs)
 {
-    return flow->map & (UINT64_C(1) << u32_ofs)
-        ? miniflow_get__(flow, u32_ofs) : 0;
+    return (flow->map & UINT64_C(1) << u32_ofs)
+        ? *(miniflow_get_u32_values(flow) +
+            count_1bits(flow->map & ((UINT64_C(1) << u32_ofs) - 1)))
+        : 0;
 }
 
 /* Returns true if 'a' and 'b' are the equal miniflow, false otherwise. */
@@ -1986,18 +1990,22 @@ miniflow_equal(const struct miniflow *a, const struct miniflow *b)
 {
     const uint32_t *ap = miniflow_get_u32_values(a);
     const uint32_t *bp = miniflow_get_u32_values(b);
+    const uint64_t a_map = a->map;
+    const uint64_t b_map = b->map;
 
-    if (OVS_LIKELY(a->map == b->map)) {
+    if (OVS_LIKELY(a_map == b_map)) {
         int count = miniflow_n_values(a);
 
         return !memcmp(ap, bp, count * sizeof *ap);
     } else {
         uint64_t map;
 
-        for (map = a->map | b->map; map; map = zero_rightmost_1bit(map)) {
+        for (map = a_map | b_map; map; map = zero_rightmost_1bit(map)) {
             uint64_t bit = rightmost_1bit(map);
+            uint64_t a_value = a_map & bit ? *ap++ : 0;
+            uint64_t b_value = b_map & bit ? *bp++ : 0;
 
-            if ((a->map & bit ? *ap++ : 0) != (b->map & bit ? *bp++ : 0)) {
+            if (a_value != b_value) {
                 return false;
             }
         }
@@ -2013,10 +2021,12 @@ miniflow_equal_in_minimask(const struct miniflow *a, const struct miniflow *b,
                            const struct minimask *mask)
 {
     const uint32_t *p = miniflow_get_u32_values(&mask->masks);
-    int idx;
+    uint64_t map;
 
-    MAP_FOR_EACH_INDEX(idx, mask->masks.map) {
-        if ((miniflow_get(a, idx) ^ miniflow_get(b, idx)) & *p++) {
+    for (map = mask->masks.map; map; map = zero_rightmost_1bit(map)) {
+        int ofs = raw_ctz(map);
+
+        if ((miniflow_get(a, ofs) ^ miniflow_get(b, ofs)) & *p++) {
             return false;
         }
     }
@@ -2032,10 +2042,12 @@ miniflow_equal_flow_in_minimask(const struct miniflow *a, const struct flow *b,
 {
     const uint32_t *b_u32 = (const uint32_t *) b;
     const uint32_t *p = miniflow_get_u32_values(&mask->masks);
-    int idx;
+    uint64_t map;
 
-    MAP_FOR_EACH_INDEX(idx, mask->masks.map) {
-        if ((miniflow_get(a, idx) ^ b_u32[idx]) & *p++) {
+    for (map = mask->masks.map; map; map = zero_rightmost_1bit(map)) {
+        int ofs = raw_ctz(map);
+
+        if ((miniflow_get(a, ofs) ^ b_u32[ofs]) & *p++) {
             return false;
         }
     }
@@ -2081,19 +2093,20 @@ minimask_combine(struct minimask *dst_,
     uint32_t *dst_values = storage;
     const struct miniflow *a = &a_->masks;
     const struct miniflow *b = &b_->masks;
-    int idx;
+    uint64_t map;
+    int n = 0;
 
     dst->values_inline = false;
     dst->offline_values = storage;
 
     dst->map = 0;
-    MAP_FOR_EACH_INDEX(idx, a->map & b->map) {
-        /* Both 'a' and 'b' have non-zero data at 'idx'. */
-        uint32_t mask = miniflow_get__(a, idx) & miniflow_get__(b, idx);
+    for (map = a->map & b->map; map; map = zero_rightmost_1bit(map)) {
+        int ofs = raw_ctz(map);
+        uint32_t mask = miniflow_get(a, ofs) & miniflow_get(b, ofs);
 
         if (mask) {
-            dst->map |= UINT64_C(1) << idx;
-            *dst_values++ = mask;
+            dst->map |= rightmost_1bit(map);
+            dst_values[n++] = mask;
         }
     }
 }
@@ -2121,16 +2134,11 @@ minimask_get(const struct minimask *mask, unsigned int u32_ofs)
     return miniflow_get(&mask->masks, u32_ofs);
 }
 
-/* Returns true if 'a' and 'b' are the same flow mask, false otherwise.
- * Minimasks may not have zero data values, so for the minimasks to be the
- * same, they need to have the same map and the same data values. */
+/* Returns true if 'a' and 'b' are the same flow mask, false otherwise.  */
 bool
 minimask_equal(const struct minimask *a, const struct minimask *b)
 {
-    return a->masks.map == b->masks.map &&
-        !memcmp(miniflow_get_u32_values(&a->masks),
-                miniflow_get_u32_values(&b->masks),
-                count_1bits(a->masks.map) * sizeof *a->masks.inline_values);
+    return miniflow_equal(&a->masks, &b->masks);
 }
 
 /* Returns true if at least one bit matched by 'b' is wildcarded by 'a',
@@ -2138,19 +2146,15 @@ minimask_equal(const struct minimask *a, const struct minimask *b)
 bool
 minimask_has_extra(const struct minimask *a, const struct minimask *b)
 {
-    const uint32_t *ap = miniflow_get_u32_values(&a->masks);
-    const uint32_t *bp = miniflow_get_u32_values(&b->masks);
-    int idx;
+    const uint32_t *p = miniflow_get_u32_values(&b->masks);
+    uint64_t map;
 
-    MAP_FOR_EACH_INDEX(idx, b->masks.map) {
-        uint32_t b_u32 = *bp++;
+    for (map = b->masks.map; map; map = zero_rightmost_1bit(map)) {
+        uint32_t a_u32 = minimask_get(a, raw_ctz(map));
+        uint32_t b_u32 = *p++;
 
-        /* 'b_u32' is non-zero, check if the data in 'a' is either zero
-         * or misses some of the bits in 'b_u32'. */
-        if (!(a->masks.map & (UINT64_C(1) << idx))
-            || ((miniflow_values_get__(ap, a->masks.map, idx) & b_u32)
-                != b_u32)) {
-            return true; /* 'a' wildcards some bits 'b' doesn't. */
+        if ((a_u32 & b_u32) != b_u32) {
+            return true;
         }
     }
 

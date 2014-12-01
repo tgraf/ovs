@@ -187,6 +187,8 @@ struct flow_metadata {
     ovs_be64 tun_id;                 /* Encapsulating tunnel ID. */
     ovs_be32 tun_src;                /* Tunnel outer IPv4 src addr */
     ovs_be32 tun_dst;                /* Tunnel outer IPv4 dst addr */
+    ovs_be16 tun_ivxlan_sepg;        /* Tunnel ivxlan sepg */
+    uint8_t  tun_ivxlan_flags;         /* Tunnel ivxlan source policy applied */
     ovs_be64 metadata;               /* OpenFlow 1.1+ metadata field. */
     uint32_t regs[FLOW_N_REGS];      /* Registers. */
     uint32_t pkt_mark;               /* Packet mark. */
@@ -499,9 +501,9 @@ flow_get_next_in_map(const struct flow *flow, uint64_t map, uint32_t *value)
          map__ = zero_rightmost_1bit(map__))
 
 /* Iterate through all struct flow u32 indices specified by 'MAP'. */
-#define MAP_FOR_EACH_INDEX(U32IDX, MAP)                 \
-    for (uint64_t map__ = (MAP);                        \
-         map__ && ((U32IDX) = raw_ctz(map__), true);    \
+#define MAP_FOR_EACH_INDEX(U32IDX, MAP)         \
+    for (uint64_t map__ = (MAP);                \
+         ((U32IDX) = ctz64(map__)) < FLOW_U32S; \
          map__ = zero_rightmost_1bit(map__))
 
 #define FLOW_U32_SIZE(FIELD)                                            \
@@ -550,22 +552,6 @@ mf_get_next_in_map(struct mf_for_each_in_map_aux *aux, uint32_t *value)
              = { miniflow_get_u32_values(FLOW), (FLOW)->map, MAP };     \
          mf_get_next_in_map(&aux__, &(VALUE));                          \
         )
-
-/* This can be used when it is known that 'u32_idx' is set in 'map'. */
-static inline uint32_t
-miniflow_values_get__(const uint32_t *values, uint64_t map, int u32_idx)
-{
-    return values[count_1bits(map & ((UINT64_C(1) << u32_idx) - 1))];
-}
-
-/* This can be used when it is known that 'u32_idx' is set in
- * the map of 'mf'. */
-static inline uint32_t
-miniflow_get__(const struct miniflow *mf, int u32_idx)
-{
-    return miniflow_values_get__(miniflow_get_u32_values(mf), mf->map,
-                                 u32_idx);
-}
 
 /* Get the value of 'FIELD' of an up to 4 byte wide integer type 'TYPE' of
  * a miniflow. */
@@ -706,10 +692,10 @@ flow_union_with_miniflow(struct flow *dst, const struct miniflow *src)
 {
     uint32_t *dst_u32 = (uint32_t *) dst;
     const uint32_t *p = miniflow_get_u32_values(src);
-    int idx;
+    uint64_t map;
 
-    MAP_FOR_EACH_INDEX(idx, src->map) {
-        dst_u32[idx] |= *p++;
+    for (map = src->map; map; map = zero_rightmost_1bit(map)) {
+        dst_u32[raw_ctz(map)] |= *p++;
     }
 }
 

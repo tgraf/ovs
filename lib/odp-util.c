@@ -1310,6 +1310,7 @@ odp_tun_key_from_attr(const struct nlattr *attr, struct flow_tnl *tun)
     const struct nlattr *a;
     bool ttl = false;
     bool unknown = false;
+    struct ivxlan_opts *ivxlan_opts;
 
     NL_NESTED_FOR_EACH(a, left, attr) {
         uint16_t type = nl_attr_type(a);
@@ -1353,6 +1354,13 @@ odp_tun_key_from_attr(const struct nlattr *attr, struct flow_tnl *tun)
         case OVS_TUNNEL_KEY_ATTR_OAM:
             tun->flags |= FLOW_TNL_F_OAM;
             break;
+        case OVS_TUNNEL_KEY_ATTR_IVXLAN_OPTS:
+            ivxlan_opts = (struct ivxlan_opts *)nl_attr_get_unspec(a, sizeof(*ivxlan_opts));
+            if (ivxlan_opts->sepg)
+                tun->ivxlan_sepg = ivxlan_opts->sepg;
+            if (ivxlan_opts->flags)
+                tun->ivxlan_flags = ivxlan_opts->flags;
+            break;
         case OVS_TUNNEL_KEY_ATTR_GENEVE_OPTS: {
             if (parse_geneve_opts(a)) {
                 return ODP_FIT_ERROR;
@@ -1383,6 +1391,8 @@ static void
 tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key)
 {
     size_t tun_key_ofs;
+    struct ivxlan_opts ivxlan_opts;
+    bool ivxlan_present = false;
 
     tun_key_ofs = nl_msg_start_nested(a, OVS_KEY_ATTR_TUNNEL);
 
@@ -1416,6 +1426,18 @@ tun_key_to_attr(struct ofpbuf *a, const struct flow_tnl *tun_key)
         nl_msg_put_flag(a, OVS_TUNNEL_KEY_ATTR_OAM);
     }
 
+    memset(&ivxlan_opts, 0, sizeof(ivxlan_opts));
+    if (tun_key->ivxlan_sepg) {
+        ivxlan_opts.sepg = tun_key->ivxlan_sepg;
+        ivxlan_present = true;
+    }
+    if (tun_key->ivxlan_flags) {
+        ivxlan_opts.flags = tun_key->ivxlan_flags;
+        ivxlan_present = true;
+    }
+    if (ivxlan_present) {
+        nl_msg_put_unspec(a, OVS_TUNNEL_KEY_ATTR_IVXLAN_OPTS, &ivxlan_opts, sizeof(ivxlan_opts));
+    }
     nl_msg_end_nested(a, tun_key_ofs);
 }
 
@@ -1800,6 +1822,14 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
         format_be16(ds, "tp_src", key.tp_src, MASK(mask, tp_src), verbose);
         format_be16(ds, "tp_dst", key.tp_dst, MASK(mask, tp_dst), verbose);
         format_tun_flags(ds, "flags", key.flags, MASK(mask, flags), verbose);
+        if (key.ivxlan_sepg) {
+            format_be16(ds, "ivxlan_sepg", key.ivxlan_sepg, 
+                        MASK(mask, ivxlan_sepg), verbose);
+        }
+        if (key.ivxlan_flags) {
+            format_u8x(ds, "ivxlan_flags", key.ivxlan_flags, 
+                       MASK(mask, ivxlan_flags), verbose);
+        }
         ds_chomp(ds, ',');
         break;
     }

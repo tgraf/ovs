@@ -401,6 +401,36 @@ enum OVS_PACKED_ENUM mf_field_id {
      */
     MFF_TUN_TOS,
 
+    /* "tun_ivxlan_sepg".
+     *
+     * ivxlan source endpoint group.
+     *
+     * Type: be16.
+     * Maskable: bitwise.
+     * Formatting: decimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: NXM_NX_TUN_IVXLAN_SEPG(37) since v2.0.
+     * OXM: none.
+     * Prefix lookup member: tunnel.ivxlan_sepg.
+     */
+    MFF_TUN_IVXLAN_SEPG,
+
+    /* "tun_ivxlan_flags".
+     *
+     * ivxlan flags.
+     *
+     * Type: u8.
+     * Maskable: bitwise.
+     * Formatting: hexadecimal.
+     * Prerequisites: none.
+     * Access: read/write.
+     * NXM: NXM_NX_TUN_IVXLAN_FLAGS(38) since v2.0.
+     * OXM: none.
+     * Prefix lookup member: tunnel.ivxlan_flags.
+     */
+    MFF_TUN_IVXLAN_FLAGS,
+
     /* "metadata".
      *
      * A scratch pad value standardized in OpenFlow 1.1+.  Initially zero, at

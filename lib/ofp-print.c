@@ -127,6 +127,15 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
         ds_put_format(string, " tun_dst="IP_FMT, IP_ARGS(pin.fmd.tun_dst));
     }
 
+    if (pin.fmd.tun_ivxlan_sepg != htons(0)) {
+        ds_put_format(string, " tun_ivxlan_sepg=0x%"PRIx16, 
+                      ntohs(pin.fmd.tun_ivxlan_sepg));
+    }
+
+    if (pin.fmd.tun_ivxlan_flags) {
+        ds_put_format(string, " tun_ivxlan_flags=%"PRIu8, pin.fmd.tun_ivxlan_flags);
+    }
+
     if (pin.fmd.metadata != htonll(0)) {
         ds_put_format(string, " metadata=0x%"PRIx64, ntohll(pin.fmd.metadata));
     }

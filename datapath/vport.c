@@ -51,6 +51,7 @@ static const struct vport_ops *vport_ops_list[] = {
 	&ovs_gre64_vport_ops,
 #endif
 	&ovs_vxlan_vport_ops,
+	&ovs_ivxlan_vport_ops,
 	&ovs_lisp_vport_ops,
 };
 

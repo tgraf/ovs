@@ -230,6 +230,7 @@ extern const struct vport_ops ovs_geneve_vport_ops;
 extern const struct vport_ops ovs_gre_vport_ops;
 extern const struct vport_ops ovs_gre64_vport_ops;
 extern const struct vport_ops ovs_vxlan_vport_ops;
+extern const struct vport_ops ovs_ivxlan_vport_ops;
 extern const struct vport_ops ovs_lisp_vport_ops;
 
 static inline void ovs_skb_postpush_rcsum(struct sk_buff *skb,

@@ -132,11 +132,11 @@ flow_hash_in_minimask(const struct flow *flow, const struct minimask *mask,
     const uint32_t *flow_u32 = (const uint32_t *)flow;
     const uint32_t *p = mask_values;
     uint32_t hash;
-    int idx;
+    uint64_t map;
 
     hash = basis;
-    MAP_FOR_EACH_INDEX(idx, mask->masks.map) {
-        hash = hash_add(hash, flow_u32[idx] & *p++);
+    for (map = mask->masks.map; map; map = zero_rightmost_1bit(map)) {
+        hash = hash_add(hash, flow_u32[raw_ctz(map)] & *p++);
     }
 
     return hash_finish(hash, (p - mask_values) * 4);
@@ -176,15 +176,13 @@ flow_hash_in_minimask_range(const struct flow *flow,
     const uint32_t *mask_values = miniflow_get_u32_values(&mask->masks);
     const uint32_t *flow_u32 = (const uint32_t *)flow;
     unsigned int offset;
-    uint64_t map;
-    const uint32_t *p;
+    uint64_t map = miniflow_get_map_in_range(&mask->masks, start, end,
+                                             &offset);
+    const uint32_t *p = mask_values + offset;
     uint32_t hash = *basis;
-    int idx;
 
-    map = miniflow_get_map_in_range(&mask->masks, start, end, &offset);
-    p = mask_values + offset;
-    MAP_FOR_EACH_INDEX(idx, map) {
-        hash = hash_add(hash, flow_u32[idx] & *p++);
+    for (; map; map = zero_rightmost_1bit(map)) {
+        hash = hash_add(hash, flow_u32[raw_ctz(map)] & *p++);
     }
 
     *basis = hash; /* Allow continuation from the unfinished value. */
@@ -208,14 +206,12 @@ flow_wildcards_fold_minimask_range(struct flow_wildcards *wc,
 {
     uint32_t *dst_u32 = (uint32_t *)&wc->masks;
     unsigned int offset;
-    uint64_t map;
-    const uint32_t *p;
-    int idx;
+    uint64_t map = miniflow_get_map_in_range(&mask->masks, start, end,
+                                             &offset);
+    const uint32_t *p = miniflow_get_u32_values(&mask->masks) + offset;
 
-    map = miniflow_get_map_in_range(&mask->masks, start, end, &offset);
-    p = miniflow_get_u32_values(&mask->masks) + offset;
-    MAP_FOR_EACH_INDEX(idx, map) {
-        dst_u32[idx] |= *p++;
+    for (; map; map = zero_rightmost_1bit(map)) {
+        dst_u32[raw_ctz(map)] |= *p++;
     }
 }
 

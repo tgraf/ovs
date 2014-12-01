@@ -772,6 +772,9 @@ get_vport_type(const struct dpif_netlink_vport *vport)
     case OVS_VPORT_TYPE_VXLAN:
         return "vxlan";
 
+    case OVS_VPORT_TYPE_IVXLAN:
+        return "ivxlan";
+
     case OVS_VPORT_TYPE_LISP:
         return "lisp";
 
@@ -802,6 +805,8 @@ netdev_to_ovs_vport_type(const struct netdev *netdev)
         return OVS_VPORT_TYPE_GRE;
     } else if (!strcmp(type, "vxlan")) {
         return OVS_VPORT_TYPE_VXLAN;
+    } else if (!strcmp(type, "ivxlan")) {
+        return OVS_VPORT_TYPE_IVXLAN;
     } else if (!strcmp(type, "lisp")) {
         return OVS_VPORT_TYPE_LISP;
     } else {
@@ -826,6 +831,7 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, struct netdev *netdev,
     struct nl_sock **socksp = NULL;
     uint32_t *upcall_pids;
     int error = 0;
+    bool set_tunnel_config = false;
 
     if (dpif->handlers) {
         socksp = vport_create_socksp(dpif, &error);
@@ -856,10 +862,21 @@ dpif_netlink_port_add__(struct dpif_netlink *dpif, struct netdev *netdev,
     }
 
     tnl_cfg = netdev_get_tunnel_config(netdev);
-    if (tnl_cfg && tnl_cfg->dst_port != 0) {
+    if (tnl_cfg) {
         ofpbuf_use_stack(&options, options_stub, sizeof options_stub);
-        nl_msg_put_u16(&options, OVS_TUNNEL_ATTR_DST_PORT,
-                       ntohs(tnl_cfg->dst_port));
+        if (tnl_cfg->dst_port != 0) {
+            set_tunnel_config = true;
+            nl_msg_put_u16(&options, OVS_TUNNEL_ATTR_DST_PORT,
+                           ntohs(tnl_cfg->dst_port));
+        }
+        if (tnl_cfg->ivxlan_sepg != 0) {
+            set_tunnel_config = true;
+            nl_msg_put_u16(&options, OVS_TUNNEL_ATTR_EPG,
+                           ntohs(tnl_cfg->ivxlan_sepg));
+        }
+    }
+
+    if (set_tunnel_config) {
         request.options = ofpbuf_data(&options);
         request.options_len = ofpbuf_size(&options);
     }
@@ -2120,7 +2137,7 @@ dpif_netlink_recv_windows(struct dpif_netlink *dpif, uint32_t handler_id,
                 return error;
             }
 
-            error = parse_odp_packet(dpif, buf, upcall, &dp_ifindex);
+            error = parse_odp_packet(buf, upcall, &dp_ifindex);
             if (!error && dp_ifindex == dpif->dp_ifindex) {
                 return 0;
             } else if (error) {

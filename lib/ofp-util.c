@@ -3298,6 +3298,8 @@ ofputil_decode_packet_in_finish(struct ofputil_packet_in *pin,
     pin->fmd.tun_id = match->flow.tunnel.tun_id;
     pin->fmd.tun_src = match->flow.tunnel.ip_src;
     pin->fmd.tun_dst = match->flow.tunnel.ip_dst;
+    pin->fmd.tun_ivxlan_sepg = match->flow.tunnel.ivxlan_sepg;
+    pin->fmd.tun_ivxlan_flags = match->flow.tunnel.ivxlan_flags;
     pin->fmd.metadata = match->flow.metadata;
     memcpy(pin->fmd.regs, match->flow.regs, sizeof pin->fmd.regs);
     pin->fmd.pkt_mark = match->flow.pkt_mark;
@@ -3422,6 +3424,12 @@ ofputil_packet_in_to_match(const struct ofputil_packet_in *pin,
     }
     if (pin->fmd.tun_dst != htonl(0)) {
         match_set_tun_dst(match, pin->fmd.tun_dst);
+    }
+    if (pin->fmd.tun_ivxlan_sepg != htonl(0)) {
+        match_set_tun_ivxlan_sepg(match, pin->fmd.tun_ivxlan_sepg);
+    }
+    if (pin->fmd.tun_ivxlan_flags) {
+        match_set_tun_ivxlan_flags(match, pin->fmd.tun_ivxlan_flags);
     }
     if (pin->fmd.metadata != htonll(0)) {
         match_set_metadata(match, pin->fmd.metadata);
