@@ -5,6 +5,10 @@
 #include <linux/version.h>
 #include_next <linux/if_vlan.h>
 
+#ifndef HAVE_VLAN_INSERT_TAG_SET_PROTO
+#define vlan_insert_tag_set_proto __vlan_put_tag
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
 /*
  * The behavior of __vlan_put_tag() has changed over time:
@@ -15,6 +19,8 @@
  *      - In 2.6.27 and 2.6.28, it did not adjust any header pointers at all.
  *
  *      - In 2.6.29 and later, it adjusts the MAC header pointer only.
+ *
+ *      - In 3.19 and later, it was renamed to vlan_insert_tag_set_proto()
  *
  * This is the version from 2.6.33.  We unconditionally substitute this version
  * to avoid the need to guess whether the version in the kernel tree is
