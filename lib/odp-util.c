@@ -2833,7 +2833,7 @@ parse_odp_key_mask_attr(const char *s, const struct simap *port_names,
         for (;;) {
             int retval;
 
-            s += strspn(s, ", \t\r\n");
+            s += strspn(s, delimiters);
             if (!*s) {
                 return -EINVAL;
             } else if (*s == ')') {
