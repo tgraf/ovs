@@ -123,17 +123,6 @@ static bool is_flow_key_valid(const struct sw_flow_key *key)
 	return !!key->eth.type;
 }
 
-static int make_writable(struct sk_buff *skb, int write_len)
-{
-	if (!pskb_may_pull(skb, write_len))
-		return -ENOMEM;
-
-	if (!skb_cloned(skb) || skb_clone_writable(skb, write_len))
-		return 0;
-
-	return pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
-}
-
 static int push_mpls(struct sk_buff *skb, struct sw_flow_key *key,
 		     const struct ovs_action_push_mpls *mpls)
 {
@@ -175,7 +164,7 @@ static int pop_mpls(struct sk_buff *skb, struct sw_flow_key *key,
 	struct ethhdr *hdr;
 	int err;
 
-	err = make_writable(skb, skb->mac_len + MPLS_HLEN);
+	err = skb_ensure_writable(skb, skb->mac_len + MPLS_HLEN);
 	if (unlikely(err))
 		return err;
 
@@ -208,7 +197,7 @@ static int set_mpls(struct sk_buff *skb, struct sw_flow_key *key,
 	__be32 *stack;
 	int err;
 
-	err = make_writable(skb, skb->mac_len + MPLS_HLEN);
+	err = skb_ensure_writable(skb, skb->mac_len + MPLS_HLEN);
 	if (unlikely(err))
 		return err;
 
@@ -251,7 +240,7 @@ static int __pop_vlan_tci(struct sk_buff *skb, __be16 *current_tci)
 	struct vlan_hdr *vhdr;
 	int err;
 
-	err = make_writable(skb, VLAN_ETH_HLEN);
+	err = skb_ensure_writable(skb, VLAN_ETH_HLEN);
 	if (unlikely(err))
 		return err;
 
@@ -335,7 +324,7 @@ static int set_eth_addr(struct sk_buff *skb, struct sw_flow_key *key,
 			const struct ovs_key_ethernet *eth_key)
 {
 	int err;
-	err = make_writable(skb, ETH_HLEN);
+	err = skb_ensure_writable(skb, ETH_HLEN);
 	if (unlikely(err))
 		return err;
 
@@ -441,8 +430,8 @@ static int set_ipv4(struct sk_buff *skb, struct sw_flow_key *key,
 	struct iphdr *nh;
 	int err;
 
-	err = make_writable(skb, skb_network_offset(skb) +
-				 sizeof(struct iphdr));
+	err = skb_ensure_writable(skb, skb_network_offset(skb) +
+				  sizeof(struct iphdr));
 	if (unlikely(err))
 		return err;
 
@@ -479,8 +468,8 @@ static int set_ipv6(struct sk_buff *skb, struct sw_flow_key *key,
 	__be32 *saddr;
 	__be32 *daddr;
 
-	err = make_writable(skb, skb_network_offset(skb) +
-			    sizeof(struct ipv6hdr));
+	err = skb_ensure_writable(skb, skb_network_offset(skb) +
+				  sizeof(struct ipv6hdr));
 	if (unlikely(err))
 		return err;
 
@@ -522,7 +511,7 @@ static int set_ipv6(struct sk_buff *skb, struct sw_flow_key *key,
 	return 0;
 }
 
-/* Must follow make_writable() since that can move the skb data. */
+/* Must follow skb_ensure_writable() since that can move the skb data. */
 static void set_tp_port(struct sk_buff *skb, __be16 *port,
 			 __be16 new_port, __sum16 *check)
 {
@@ -552,8 +541,8 @@ static int set_udp(struct sk_buff *skb, struct sw_flow_key *key,
 	struct udphdr *uh;
 	int err;
 
-	err = make_writable(skb, skb_transport_offset(skb) +
-				 sizeof(struct udphdr));
+	err = skb_ensure_writable(skb, skb_transport_offset(skb) +
+				  sizeof(struct udphdr));
 	if (unlikely(err))
 		return err;
 
@@ -577,8 +566,8 @@ static int set_tcp(struct sk_buff *skb, struct sw_flow_key *key,
 	struct tcphdr *th;
 	int err;
 
-	err = make_writable(skb, skb_transport_offset(skb) +
-				 sizeof(struct tcphdr));
+	err = skb_ensure_writable(skb, skb_transport_offset(skb) +
+				  sizeof(struct tcphdr));
 	if (unlikely(err))
 		return err;
 
@@ -603,7 +592,7 @@ static int set_sctp(struct sk_buff *skb, struct sw_flow_key *key,
 	int err;
 	unsigned int sctphoff = skb_transport_offset(skb);
 
-	err = make_writable(skb, sctphoff + sizeof(struct sctphdr));
+	err = skb_ensure_writable(skb, sctphoff + sizeof(struct sctphdr));
 	if (unlikely(err))
 		return err;
 
