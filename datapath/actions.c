@@ -686,7 +686,9 @@ static int conntrack(struct sk_buff *skb, struct sw_flow_key *key,
 		     const struct ovs_conntrack_info *info)
 {
 	int nh_ofs = skb_network_offset(skb);
+#ifdef CONFIG_NET_NS
 	struct vport *vport;
+#endif
 	struct net *net;
 	struct nf_conn *ct = info->ct;
 
