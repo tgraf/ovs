@@ -7,13 +7,14 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without warranty of any kind.
 
-#%define kernel 3.1.5-1.fc16.x86_64
-#define kernel %{kernel_source}
+# Use -D 'kversion 2.6.32-131.6.1.el6.x86_64' to build package
+# for specified kernel version.
 %{?kversion:%define kernel %kversion}
+%define _unpackaged_files_terminate_build 0 
 
 Name: openvswitch-kmod
 Summary: Open vSwitch Kernel Modules
-Group: System Environment/Daemons
+Group: System/Kernel
 URL: http://www.openvswitch.org/
 Vendor: OpenSource Security Ralf Spenneberg <ralf@os-s.net>
 Version: @VERSION@
@@ -22,8 +23,7 @@ Version: @VERSION@
 License: GPLv2
 Release: 1%{?dist}
 Source: openvswitch-%{version}.tar.gz
-#Source1: openvswitch-init
-Buildroot: /tmp/openvswitch-xen-rpm
+BuildRequires: %kernel_module_package_buildreqs
 
 %description
 Open vSwitch provides standard network bridging functions augmented with
@@ -32,6 +32,10 @@ traffic. This package contains the kernel modules.
 
 %prep
 %setup -q -n openvswitch-%{version}
+cat > openvswitch.conf <<EOF
+override openvswitch * kernel/extra/openvswitch
+override openvswitch * kernel/weak-updates/openvswitch
+EOF
 
 %build
 ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=%{_localstatedir} --with-linux=/lib/modules/%{kernel}/build --enable-ssl
@@ -39,10 +43,15 @@ make %{_smp_mflags} -C datapath/linux
 
 %install
 rm -rf $RPM_BUILD_ROOT
+export INSTALL_MOD_PATH=$RPM_BUILD_ROOT
+export INSTALL_MOD_DIR=extra/openvswitch
+#make -C /lib/modules/${kernel}/source M=datapath/linux modules_install
 make -C datapath/linux modules_install
 
 install -d -m 755 $RPM_BUILD_ROOT/lib/modules/%{kernel}/kernel/extra/openvswitch
 find datapath/linux -name *.ko -exec install -m 755  \{\} $RPM_BUILD_ROOT/lib/modules/%{kernel}/kernel/extra/openvswitch \;
+mkdir -p %{buildroot}%{_sysconfdir}/depmod.d/
+install -m 644 openvswitch.conf %{buildroot}%{_sysconfdir}/depmod.d/
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -56,8 +65,11 @@ depmod %{kernel}
 %files
 %defattr(-,root,root)
 /lib/modules/%{kernel}/kernel/extra/openvswitch/openvswitch.ko
+%config %{_sysconfdir}/depmod.d/openvswitch.conf
 
 %changelog
+* Thu Dec 11 2014 Rob Adams <readams@readams.net>
+- Allow building for any kernel version and add depmod conf file
 * Wed Sep 21 2011 Kyle Mestery <kmestery@cisco.com>
 - Updated for F15
 * Wed Jan 12 2011 Ralf Spenneberg <ralf@os-s.net>

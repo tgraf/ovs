@@ -32,13 +32,11 @@ Source: http://openvswitch.org/releases/%{name}-%{version}.tar.gz
 
 BuildRequires: autoconf
 BuildRequires: systemd-units openssl openssl-devel
-BuildRequires: python python-twisted-core python-zope-interface PyQt4
-BuildRequires: desktop-file-utils
-BuildRequires: groff graphviz
 
 Requires: openssl iproute module-init-tools
 #Upstream kernel commit 4f647e0a3c37b8d5086214128614a136064110c3
-#Requires: kernel >= 3.15.0-0
+Requires: kernel >= 3.10.0-0
+Requires: openvswitch-lib = %{version}-%{release}
 
 Requires(post): systemd-units
 Requires(preun): systemd-units
@@ -56,7 +54,9 @@ traffic.
 Summary: Open vSwitch python bindings
 License: ASL 2.0
 BuildArch: noarch
-Requires: python
+Requires: python python-twisted-core python-zope-interface PyQt4
+Requires: desktop-file-utils
+Requires: groff graphviz
 
 %description -n python-openvswitch
 Python bindings for the Open vSwitch database
@@ -72,9 +72,18 @@ Requires: python python-twisted-core python-twisted-web
 Utilities that are useful to diagnose performance and connectivity
 issues in Open vSwitch setup.
 
+%package lib
+Summary: Open vSwitch shared libraries
+License: ASL 2.0
+
+%description lib
+This provides the Open vSwitch shared libraries used by the Open
+vSwitch daemons and tools.
+
 %package devel
 Summary: Open vSwitch OpenFlow development package (library, headers)
 License: ASL 2.0
+Requires: openvswitch-lib = %{version}-%{release}
 Provides: openvswitch-static = %{version}-%{release}
 
 %description devel
@@ -86,7 +95,8 @@ files needed to build an external application.
 %setup -q
 
 %build
-%configure --enable-ssl --with-pkidir=%{_sharedstatedir}/openvswitch/pki
+%configure --enable-ssl --with-pkidir=%{_sharedstatedir}/openvswitch/pki \
+    --enable-shared
 make %{?_smp_mflags}
 
 %install
@@ -129,6 +139,9 @@ install -d -m 0755 $RPM_BUILD_ROOT/%{_sharedstatedir}/openvswitch
 
 touch $RPM_BUILD_ROOT%{_sysconfdir}/openvswitch/conf.db
 touch $RPM_BUILD_ROOT%{_sysconfdir}/openvswitch/system-id.conf
+
+# Temporary install of headers for library until headers are reorganized
+find lib ofproto -name "*.h" -exec cp --parents -t $RPM_BUILD_ROOT%{_includedir}/openvswitch/ {} \;
 
 %check
 %if %{with check}
@@ -191,9 +204,13 @@ rm -rf $RPM_BUILD_ROOT
 %{_mandir}/man8/ovs-l3ping.8*
 %{python_sitelib}/ovstest
 
+%files lib
+%{_libdir}/*.so.*
+
 %files devel
 %{_libdir}/*.a
 %{_libdir}/*.la
+%{_libdir}/*.so
 %{_libdir}/pkgconfig/*.pc
 %{_includedir}/openvswitch/*
 %{_includedir}/openflow/*
@@ -268,5 +285,7 @@ rm -rf $RPM_BUILD_ROOT
 %exclude %{_datadir}/openvswitch/scripts/ovs-save
 
 %changelog
+* Thu Dec 11 2014 Rob Adams <readams@readams.net>
+- Add openvswitch-lib and fix some dependency issues
 * Wed Jan 12 2011 Ralf Spenneberg <ralf@os-s.net>
 - First build on F14
