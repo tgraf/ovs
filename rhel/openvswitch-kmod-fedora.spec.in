@@ -7,9 +7,9 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without warranty of any kind.
 
-# Use -D 'kversion 2.6.32-131.6.1.el6.x86_64' to build package
-# for specified kernel version.
-%{?kversion:%define kernel %kversion}
+%{!?kmoddir:%define kmoddir %(/bin/ls -tr /lib/modules | tail -1)}
+%{!?ksrcdir:%define ksrcdir %(/bin/ls -tr /usr/src/kernels | tail -1)}
+
 %define _unpackaged_files_terminate_build 0 
 
 Name: openvswitch-kmod
@@ -33,43 +33,59 @@ traffic. This package contains the kernel modules.
 %prep
 %setup -q -n openvswitch-%{version}
 cat > openvswitch.conf <<EOF
-override openvswitch * kernel/extra/openvswitch
-override openvswitch * kernel/weak-updates/openvswitch
+override openvswitch * extra/openvswitch
+override openvswitch * weak-updates/openvswitch
 EOF
 
 %build
-./configure --prefix=/usr --sysconfdir=/etc --localstatedir=%{_localstatedir} --with-linux=/lib/modules/%{kernel}/build --enable-ssl
+./configure --prefix=/usr --sysconfdir=/etc --localstatedir=%{_localstatedir} --with-linux=/lib/modules/%{kmoddir}/build --enable-ssl
 make %{_smp_mflags} -C datapath/linux
 
 %install
-rm -rf $RPM_BUILD_ROOT
 export INSTALL_MOD_PATH=$RPM_BUILD_ROOT
 export INSTALL_MOD_DIR=extra/openvswitch
-#make -C /lib/modules/${kernel}/source M=datapath/linux modules_install
-make -C datapath/linux modules_install
+make -C /usr/src/kernels/%{ksrcdir} modules_install M="`pwd`"/datapath/linux
 
-install -d -m 755 $RPM_BUILD_ROOT/lib/modules/%{kernel}/kernel/extra/openvswitch
-find datapath/linux -name *.ko -exec install -m 755  \{\} $RPM_BUILD_ROOT/lib/modules/%{kernel}/kernel/extra/openvswitch \;
-mkdir -p %{buildroot}%{_sysconfdir}/depmod.d/
+install -d %{buildroot}%{_sysconfdir}/depmod.d/
 install -m 644 openvswitch.conf %{buildroot}%{_sysconfdir}/depmod.d/
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%preun
-
 %post
-# Ensure that modprobe will find our modules.
-depmod %{kernel}
+if [ -e "/boot/System.map-%{kmoddir}" ]; then
+    /sbin/depmod -aeF /boot/System.map-%{kmoddir} %{kmoddir} > /dev/null || :
+fi
+
+modules=( $(find /lib/modules/%{kmoddir}/extra/openvswitch/ -name '*.ko') )
+if [ -x "/sbin/weak-modules" ]; then
+    printf '%s\n' "${modules[@]}"     | /sbin/weak-modules --add-modules
+fi
+
+
+%preun
+find /lib/modules/%{kmoddir}/extra/openvswitch/ -name '*.ko' > /var/run/rpm-kmod-%{name}-modules
+
+%postun
+if [ -e "/boot/System.map-%{kmoddir}" ]; then
+    /sbin/depmod -aF /boot/System.map-%{kmoddir} %{kmoddir} > /dev/null || :
+fi
+if [ "$1" = 0 ];then
+    modules=( $(cat /var/run/rpm-kmod-%{name}-modules) )
+    if [ -x "/sbin/weak-modules" ]; then
+        printf '%s\n' "${modules[@]}"         | /sbin/weak-modules --remove-modules
+    fi
+fi
 
 %files
 %defattr(-,root,root)
-/lib/modules/%{kernel}/kernel/extra/openvswitch/openvswitch.ko
+/lib/modules/%{kmoddir}/extra/openvswitch/openvswitch.ko
 %config %{_sysconfdir}/depmod.d/openvswitch.conf
 
 %changelog
 * Thu Dec 11 2014 Rob Adams <readams@readams.net>
 - Allow building for any kernel version and add depmod conf file
+- Use weak-modules to allow installing to any RHEL7 system
 * Wed Sep 21 2011 Kyle Mestery <kmestery@cisco.com>
 - Updated for F15
 * Wed Jan 12 2011 Ralf Spenneberg <ralf@os-s.net>
