@@ -58,4 +58,28 @@ int dpif_netlink_vport_get(const char *name, struct dpif_netlink_vport *reply,
 
 bool dpif_netlink_is_internal_device(const char *name);
 
+struct dpif_netlink_vxlan_config {
+    /* OVS_CONFIG_CMD_SET */
+    uint16_t vxlan_port;
+    uint8_t  igmp_cmd;
+    uint32_t igmp_group;
+
+    /* OVS_CONFIG_CMD_GET */
+    uint8_t  igmp_group_count;
+    uint32_t igmp_group_table[200];
+};
+
+struct dpif_netlink_config {
+    /* Generic Netlink header. */
+    uint8_t cmd;                      /* get or set */
+
+    int dp_ifindex;
+    int type;
+    union {
+        struct dpif_netlink_vxlan_config vxlan;
+    } u;
+};
+
+void test_dpif_config_get(void);
+void test_dpif_config_set(void);
 #endif /* dpif-netlink.h */

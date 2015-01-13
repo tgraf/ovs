@@ -31,6 +31,7 @@
 #include "flow_table.h"
 #include "vlan.h"
 #include "vport.h"
+#include "vxlan-mcast.h"
 
 #define DP_MAX_PORTS           USHRT_MAX
 #define DP_VPORT_HASH_BUCKETS  1024
@@ -85,6 +86,9 @@ struct datapath {
 
 	/* Stats. */
 	struct dp_stats_percpu __percpu *stats_percpu;
+
+	/* Vxlan igmp table */
+	struct vxlan_mcast_table vxlan_igmp_table;
 
 #ifdef CONFIG_NET_NS
 	/* Network namespace ref. */

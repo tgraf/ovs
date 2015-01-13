@@ -505,6 +505,39 @@ enum ovs_flow_attr {
 
 #define OVS_FLOW_ATTR_MAX (__OVS_FLOW_ATTR_MAX - 1)
 
+/* config attributes */
+
+#define OVS_CONFIG_FAMILY "ovs_config"
+#define OVS_CONFIG_VERSION 1
+
+enum ovs_config_cmd {
+        OVS_CONFIG_CMD_GET,
+        OVS_CONFIG_CMD_SET
+};
+
+enum ovs_vxlan_config_cmd {
+	VXLAN_IGMP_CMD_JOIN,
+	VXLAN_IGMP_CMD_LEAVE
+};
+
+enum ovs_vxlan_config_attr {
+	OVS_CONFIG_ATTR_VXLAN_UNSPEC,
+        OVS_CONFIG_ATTR_VXLAN_PORT,             /* vxlan port            */
+        OVS_CONFIG_ATTR_VXLAN_IGMP_CMD,         /* igmp join or leave    */
+        OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP,       /* multicast address     */
+        __OVS_CONFIG_ATTR_VXLAN_MAX
+};
+
+#define OVS_CONFIG_ATTR_VXLAN_MAX (__OVS_CONFIG_ATTR_VXLAN_MAX - 1)
+
+enum ovs_config_attr {
+        OVS_CONFIG_ATTR_UNSPEC,
+        OVS_CONFIG_ATTR_VXLAN,         /* sequence of vxlan config attributes */
+        __OVS_CONFIG_ATTR_MAX
+};
+
+#define OVS_CONFIG_ATTR_MAX (__OVS_CONFIG_ATTR_MAX - 1)
+
 /**
  * Omit attributes for notifications.
  *

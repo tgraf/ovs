@@ -831,6 +831,28 @@ void dpif_disable_upcall(struct dpif *);
 
 void dpif_print_packet(struct dpif *, struct dpif_upcall *);
 
+
+/* Configs. */
+struct dpif_dp_vxlan_config {
+    /* OVS_CONFIG_CMD_SET */
+    uint16_t vxlan_port;
+    uint8_t  igmp_cmd;
+    uint32_t igmp_group;
+
+    /* OVS_CONFIG_CMD_GET */
+    uint8_t  igmp_group_count;
+    uint32_t igmp_group_table[200];
+};
+
+struct dpif_dp_config {
+    int type;                               /* currently only vxlan */
+    int cmd;                                /* get or set */
+    union {
+        struct dpif_dp_vxlan_config vxlan;
+    } u;
+};
+
+int dpif_configure(const struct dpif *, struct dpif_dp_config *);
 /* Miscellaneous. */
 
 void dpif_get_netflow_ids(const struct dpif *,

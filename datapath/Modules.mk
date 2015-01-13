@@ -20,7 +20,8 @@ openvswitch_sources = \
 	vport-lisp.c \
 	vport-netdev.c \
 	vport-vxlan.c \
-	vport-ivxlan.c
+	vport-ivxlan.c \
+	vxlan-mcast.c
 
 openvswitch_headers = \
 	compat.h \

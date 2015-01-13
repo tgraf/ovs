@@ -373,6 +373,9 @@ struct dpif_class {
     /* Get datapath version. Caller is responsible for freeing the string
      * returned.  */
     char *(*get_datapath_version)(void);
+
+    /* Get and Set dpif config */
+    int (*config)(const struct dpif *, struct dpif_dp_config *);
 };
 
 extern const struct dpif_class dpif_netlink_class;

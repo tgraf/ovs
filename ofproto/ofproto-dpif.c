@@ -5098,6 +5098,112 @@ disable_tnl_push_pop(struct unixctl_conn *conn OVS_UNUSED, int argc OVS_UNUSED,
 }
 
 static void
+unixctl_dpif_vxlan_igmp_config(struct unixctl_conn *conn, const char *argv[],
+                               int igmp_cmd)
+{
+    struct dpif_dp_config request;
+    uint16_t port;
+    uint32_t ip;
+    const struct dpif *dpif;
+    const struct ofproto_dpif *ofproto;
+    ofproto = ofproto_dpif_lookup(argv[1]);
+    int err;
+    if (!ofproto) {
+        unixctl_command_reply_error(conn, "no such bridge");
+        return;
+    }
+    if (!ofproto->backer || !ofproto->backer->dpif) {
+        unixctl_command_reply_error(conn, "cannot find dpif");
+        return;
+    }
+    dpif = ofproto->backer->dpif;
+    port = htons(atoi(argv[2]));
+    if (!inet_pton(AF_INET, argv[3], &ip)) {
+        unixctl_command_reply_error(conn, "invalid ip address");
+        return;
+    }
+    
+    memset(&request, 0, sizeof(request));
+    request.cmd = OVS_CONFIG_CMD_SET;
+    request.type = OVS_CONFIG_ATTR_VXLAN;
+    request.u.vxlan.vxlan_port = port;
+    request.u.vxlan.igmp_cmd = igmp_cmd;
+    request.u.vxlan.igmp_group = ip;
+    
+    err = dpif_configure(dpif, &request);
+    if (!err)
+        unixctl_command_reply(conn, NULL);
+    else
+        unixctl_command_reply_error(conn, ovs_strerror(err));
+}
+
+static void
+ofproto_unixctl_dpif_vxlan_igmp_join(struct unixctl_conn *conn,
+                                     int argc OVS_UNUSED, const char *argv[],
+                                     void *aux OVS_UNUSED)
+{
+    unixctl_dpif_vxlan_igmp_config(conn, argv, VXLAN_IGMP_CMD_JOIN);
+}
+
+static void
+ofproto_unixctl_dpif_vxlan_igmp_leave(struct unixctl_conn *conn,
+                                      int argc OVS_UNUSED, const char *argv[],
+                                      void *aux OVS_UNUSED)
+{
+    unixctl_dpif_vxlan_igmp_config(conn, argv, VXLAN_IGMP_CMD_LEAVE);
+}
+
+static void
+ofproto_unixctl_dpif_vxlan_igmp_show(struct unixctl_conn *conn,
+                                     int argc OVS_UNUSED, const char *argv[],
+                                     void *aux OVS_UNUSED)
+{
+    int i;
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    struct dpif_dp_config request;
+    uint16_t port;
+    const struct dpif *dpif;
+    const struct ofproto_dpif *ofproto;
+    ofproto = ofproto_dpif_lookup(argv[1]);
+    char ip[INET_ADDRSTRLEN];
+
+    if (!ofproto) {
+        unixctl_command_reply_error(conn, "no such bridge");
+        return;
+    }
+    if (!ofproto->backer || !ofproto->backer->dpif) {
+        unixctl_command_reply_error(conn, "cannot find dpif");
+        return;
+    }
+    dpif = ofproto->backer->dpif;
+    port = htons(atoi(argv[2]));
+
+    memset(&request, 0, sizeof(request));
+    request.cmd = OVS_CONFIG_CMD_GET;
+    request.type = OVS_CONFIG_ATTR_VXLAN;
+    request.u.vxlan.vxlan_port = port;
+    request.u.vxlan.igmp_cmd = 0;
+    request.u.vxlan.igmp_group = 0;
+
+    dpif_configure(dpif, &request);
+    ds_init(&ds);
+    for (i = 0; i < request.u.vxlan.igmp_group_count; i++) {
+         if (inet_ntop(AF_INET, &request.u.vxlan.igmp_group_table[i],
+                       ip, INET_ADDRSTRLEN)) {
+             ds_put_format(&ds, "%s ", ip);
+         } else {
+             unixctl_command_reply_error(conn, ovs_strerror(errno));
+             ds_destroy(&ds);
+             return;
+         }
+    }
+    if (request.u.vxlan.igmp_group_count)
+        ds_put_format(&ds, "\n");
+    unixctl_command_reply(conn, ds_cstr(&ds));
+    ds_destroy(&ds);
+}
+
+static void
 ofproto_unixctl_init(void)
 {
     static bool registered;
@@ -5128,7 +5234,18 @@ ofproto_unixctl_init(void)
                              NULL);
     unixctl_command_register("dpif/dump-flows", "[-m] bridge", 1, 2,
                              ofproto_unixctl_dpif_dump_flows, NULL);
-
+    unixctl_command_register("dpif/vxlan-mcast-join",
+                             "bridge <port> <address>",
+                             3, 3, ofproto_unixctl_dpif_vxlan_igmp_join,
+                             NULL);
+    unixctl_command_register("dpif/vxlan-mcast-leave",
+                             "<bridge> <port> <address>",
+                             3, 3, ofproto_unixctl_dpif_vxlan_igmp_leave,
+                             NULL);
+    unixctl_command_register("dpif/vxlan-mcast-dump",
+                             "<bridge> <port>", 2, 2,
+                             ofproto_unixctl_dpif_vxlan_igmp_show,
+                             NULL);
     unixctl_command_register("ofproto/tnl-push-pop", "[on]|[off]", 1, 1,
                              disable_tnl_push_pop, NULL);
 }

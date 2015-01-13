@@ -59,12 +59,14 @@
 #include "vlan.h"
 #include "vport-internal_dev.h"
 #include "vport-netdev.h"
+#include "vxlan-mcast.h"
 
 int ovs_net_id __read_mostly;
 
 static struct genl_family dp_packet_genl_family;
 static struct genl_family dp_flow_genl_family;
 static struct genl_family dp_datapath_genl_family;
+static struct genl_family dp_config_genl_family;
 
 static struct genl_multicast_group ovs_dp_flow_multicast_group = {
 	.name = OVS_FLOW_MCGROUP
@@ -1445,6 +1447,11 @@ static int ovs_dp_cmd_new(struct sk_buff *skb, struct genl_info *info)
 
 	ovs_dp_set_net(dp, hold_net(sock_net(skb->sk)));
 
+	/* Allocate vxlan mcast table */
+	err = vxlan_mcast_init(&dp->vxlan_igmp_table);
+	if (err)
+		goto err_free_dp;
+
 	/* Allocate table. */
 	err = ovs_flow_tbl_init(&dp->table);
 	if (err)
@@ -1544,6 +1551,8 @@ static void __dp_destroy(struct datapath *dp)
 	 * all ports in datapath are destroyed first before freeing datapath.
 	 */
 	ovs_dp_detach_port(ovs_vport_ovsl(dp, OVSP_LOCAL));
+
+	vxlan_mcast_destroy(&dp->vxlan_igmp_table);
 
 	/* RCU destroy the flow table */
 	call_rcu(&dp->rcu, destroy_dp_rcu);
@@ -2083,11 +2092,176 @@ struct genl_family dp_vport_genl_family = {
 	.n_mcgrps = 1,
 };
 
+static const struct nla_policy
+vxlan_config_policy[OVS_CONFIG_ATTR_VXLAN_MAX + 1] = {
+        [OVS_CONFIG_ATTR_VXLAN_PORT] = { .type = NLA_U16 },
+	[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD] = { .type = NLA_U8 },
+        [OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP] = { .type = NLA_UNSPEC },
+};
+
+static const struct nla_policy config_policy[OVS_CONFIG_ATTR_MAX + 1] = {
+        [OVS_CONFIG_ATTR_VXLAN] = { .type = NLA_NESTED },
+};
+
+static int vxlan_configure(struct datapath *dp, int ifindex, struct nlattr *nla,
+			   struct genl_info *info)
+{
+	struct nlattr *attrs[OVS_CONFIG_ATTR_VXLAN_MAX + 1];
+	u16 vxlan_port;
+	struct sk_buff *reply;
+	int group_count;
+	u32 *group_table;
+
+	if (nla_parse_nested(attrs, OVS_CONFIG_ATTR_VXLAN_MAX, nla,
+			     vxlan_config_policy))
+		return -1;
+
+	if (!attrs[OVS_CONFIG_ATTR_VXLAN_PORT])
+		return -1;
+
+	vxlan_port = nla_get_u16(attrs[OVS_CONFIG_ATTR_VXLAN_PORT]);
+
+	/* Set attribute */
+	if (info == NULL) {
+		u8 igmp_cmd;
+		u32 igmp_ip;
+
+		if (!(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD]) &&
+		      attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP])
+		    return -1;
+
+		igmp_cmd = nla_get_u8(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD]);
+		igmp_ip = nla_get_u32(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP]);
+		return vxlan_configure_igmp(dp, vxlan_port, igmp_cmd, igmp_ip);
+
+	} else {
+	/* Get attribute */
+		struct ovs_header *ovs_header;
+		struct nlattr *nest;
+		group_table = vmalloc(4 * 1024);
+		if (!group_table)
+			return -ENOMEM;
+
+		reply = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+		if (!reply) {
+			vfree(group_table);
+			return -ENOMEM;
+		}
+
+		ovs_header = genlmsg_put(reply, info->snd_portid, info->snd_seq,
+					 &dp_config_genl_family, 0,
+					 OVS_CONFIG_CMD_GET);
+		if (!ovs_header)
+			goto exit_free;
+
+		ovs_header->dp_ifindex = ifindex;
+
+		nest = nla_nest_start(reply, OVS_CONFIG_ATTR_VXLAN);
+		if (!nest)
+			goto exit_free;
+		if (nla_put_u16(reply, OVS_CONFIG_ATTR_VXLAN_PORT,
+				vxlan_port))
+			goto exit_free;
+		if (nla_put_u8(reply, OVS_CONFIG_ATTR_VXLAN_IGMP_CMD,
+			       VXLAN_IGMP_CMD_JOIN))
+			goto exit_free;
+ 		group_count = vxlan_dump_igmp(dp, vxlan_port, group_table);
+		if (group_count &&
+			nla_put(reply, OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP,
+				group_count * 4, group_table))
+			goto exit_free;
+		vfree(group_table);
+		nla_nest_end(reply, nest);
+		return genlmsg_reply(reply, info);
+	}
+
+exit_free:
+	vfree(group_table);
+	kfree_skb(reply);
+	return -EMSGSIZE;
+}
+
+static int ovs_config_cmd_get(struct sk_buff *skb, struct genl_info *info)
+{
+	struct nlattr **a = info->attrs;
+	struct ovs_header *ovs_header = info->userhdr;
+	struct datapath *dp;
+	int err = 0;
+
+	rcu_read_lock();
+
+	dp = get_dp(sock_net(skb->sk), ovs_header->dp_ifindex);
+	if (!dp) {
+		rcu_read_unlock();
+		return -EINVAL;
+	}
+		
+	if (a[OVS_CONFIG_ATTR_VXLAN]) {
+		err = vxlan_configure(dp, ovs_header->dp_ifindex,
+				      a[OVS_CONFIG_ATTR_VXLAN], info);
+	}
+					  
+	rcu_read_unlock();
+
+	return err;
+}
+
+static int ovs_config_cmd_set(struct sk_buff *skb, struct genl_info *info)
+{
+        struct nlattr **a = info->attrs;
+	struct ovs_header *ovs_header = info->userhdr;
+	struct datapath *dp;
+	int err = 0;
+
+	rcu_read_lock();
+
+	dp = get_dp(sock_net(skb->sk), ovs_header->dp_ifindex);
+	if (!dp) {
+		rcu_read_unlock();
+		return -EINVAL;
+	}
+
+	if (a[OVS_CONFIG_ATTR_VXLAN]) {
+		err = vxlan_configure(dp, ovs_header->dp_ifindex,
+				      a[OVS_CONFIG_ATTR_VXLAN], NULL);
+	}
+					  
+	rcu_read_unlock();
+
+	return err;
+}
+
+static struct genl_ops dp_config_genl_ops[] = {
+        { .cmd = OVS_CONFIG_CMD_GET,
+          .flags = GENL_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+          .policy = config_policy,
+          .doit = ovs_config_cmd_get,
+        },
+         { .cmd = OVS_CONFIG_CMD_SET,
+          .flags = GENL_ADMIN_PERM, /* Requires CAP_NET_ADMIN privilege. */
+          .policy = config_policy,
+          .doit = ovs_config_cmd_set,
+        },
+};
+
+static struct genl_family dp_config_genl_family = {
+        .id = GENL_ID_GENERATE,
+        .hdrsize = sizeof(struct ovs_header),
+        .name = OVS_CONFIG_FAMILY,
+        .version = OVS_CONFIG_VERSION,
+        .maxattr = OVS_CONFIG_ATTR_MAX,
+        .netnsok = true,
+        .parallel_ops = true,
+        .ops = dp_config_genl_ops,
+        .n_ops = ARRAY_SIZE(dp_config_genl_ops),
+};
+
 static struct genl_family *dp_genl_families[] = {
 	&dp_datapath_genl_family,
 	&dp_vport_genl_family,
 	&dp_flow_genl_family,
 	&dp_packet_genl_family,
+	&dp_config_genl_family,
 };
 
 static void dp_unregister_genl(int n_families)

@@ -1709,3 +1709,9 @@ dpif_supports_tnl_push_pop(const struct dpif *dpif)
    return !strcmp(dpif->dpif_class->type, "netdev") ||
           !strcmp(dpif->dpif_class->type, "dummy");
 }
+
+int
+dpif_configure(const struct dpif *dpif, struct dpif_dp_config *config)
+{
+    return dpif->dpif_class->config(dpif, config);
+}
