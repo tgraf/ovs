@@ -3,3 +3,5 @@ openvswitch-kmod-rhel6.spec
 openvswitch-kmod-fedora.spec
 openvswitch.spec
 openvswitch-fedora.spec
+openvswitch-gbp-rhel.spec
+openvswitch-gbp-kmod-rhel.spec
