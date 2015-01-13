@@ -9,6 +9,7 @@
 
 %{!?kmoddir:%define kmoddir %(/bin/ls -tr /lib/modules | tail -1)}
 %{!?ksrcdir:%define ksrcdir %(/bin/ls -tr /usr/src/kernels | tail -1)}
+%{!?buildversion:%define buildversion 1}
 
 %define _unpackaged_files_terminate_build 0 
 
@@ -21,7 +22,7 @@ Version: @VERSION@
 
 # The entire source code is ASL 2.0 except datapath/ which is GPLv2
 License: GPLv2
-Release: 1%{?dist}
+Release: %{buildversion}%{?dist}
 Source: openvswitch-%{version}.tar.gz
 BuildRequires: %kernel_module_package_buildreqs
 Provides: openvswitch-gbp-kmod

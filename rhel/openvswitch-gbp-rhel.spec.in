@@ -16,6 +16,8 @@
 # Enable PIE, bz#955181
 %global _hardened_build 1
 
+%{!?buildversion:%define buildversion 1}
+
 Name: openvswitch-gbp
 Summary: Open vSwitch
 Group: System Environment/Daemons
@@ -27,7 +29,7 @@ Version: @VERSION@
 # datapath/ is GPLv2 (although not built into any of the binary packages)
 # python/compat is Python (although not built into any of the binary packages)
 License: ASL 2.0 and LGPLv2+ and SISSL
-Release: 1%{?dist}
+Release: %{buildversion}%{?dist}
 Source: http://openvswitch.org/releases/openvswitch-%{version}.tar.gz
 
 BuildRequires: autoconf
