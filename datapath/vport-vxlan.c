@@ -96,6 +96,8 @@ static void vxlan_rcv(struct vxlan_sock *vs, struct sk_buff *skb, __be32 vx_vni)
 	/* Save outer tunnel values */
 	iph = ip_hdr(skb);
 	key = cpu_to_be64(ntohl(vx_vni) >> 8);
+	tun_info.tunnel.ivxlan_sepg = 0;
+	tun_info.tunnel.ivxlan_flags = 0;
 	ovs_flow_tun_info_init(&tun_info, iph,
 			       udp_hdr(skb)->source, udp_hdr(skb)->dest,
 			       key, TUNNEL_KEY, NULL, 0);
