@@ -2373,48 +2373,6 @@ dpif_netlink_config_transact(const struct dpif_netlink_config *request,
     return error;
 }
 
-struct dpif_netlink_config test_dpif_request, test_dpif_reply;
-void
-test_dpif_config_get(void)
-{
-    int i;
-    struct ofpbuf *buf;
-    struct dpif_netlink_config request;
-    request.cmd = OVS_CONFIG_CMD_GET;
-    request.dp_ifindex = 8427;
-    request.type = OVS_CONFIG_ATTR_VXLAN;
-    request.u.vxlan.vxlan_port = 4789;
-    request.u.vxlan.igmp_group = 0;
-    dpif_netlink_config_transact(&request, &test_dpif_reply, &buf);
-
-    for (i = 0; i < test_dpif_reply.u.vxlan.igmp_group_count; i++) {
-         test_dpif_request.u.vxlan.igmp_cmd = VXLAN_IGMP_CMD_LEAVE;
-         test_dpif_request.u.vxlan.igmp_group = 
-             test_dpif_reply.u.vxlan.igmp_group_table[i];
-         dpif_netlink_config_transact(&test_dpif_request, NULL, NULL);
-    }
-
-    dpif_netlink_config_transact(&request, &test_dpif_reply, &buf);
-    ofpbuf_delete(buf);
-}
-
-void
-test_dpif_config_set(void)
-{
-    int i;
-    unsigned int seed = 0xab1234cd;
-    test_dpif_request.cmd = OVS_CONFIG_CMD_SET;
-    test_dpif_request.dp_ifindex = 8427;
-    test_dpif_request.type = OVS_CONFIG_ATTR_VXLAN;
-    test_dpif_request.u.vxlan.vxlan_port = 4789;
-    test_dpif_request.u.vxlan.igmp_cmd = VXLAN_IGMP_CMD_JOIN;
-    srand(seed);
-    for (i = 0; i < 100; i++) {
-         test_dpif_request.u.vxlan.igmp_group = rand_r(&seed);
-         dpif_netlink_config_transact(&test_dpif_request, NULL, NULL);
-    }
-}
-
 static int dpif_netlink_configure(const struct dpif *dpif_,
                                   struct dpif_dp_config *config)
 {
