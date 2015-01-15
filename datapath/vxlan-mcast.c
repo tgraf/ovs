@@ -186,37 +186,47 @@ int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 
 	vs = vxlan_find_sock(dp, vxlan_port);
 	if (!vs) {
-		result = -EINVAL;
+		result = -ENOENT;
 		goto unlock_exit;
 	}
 	sk = vs->sock->sk;
 
-
+	/* check for duplicates first */
 	if (igmp_cmd == VXLAN_IGMP_CMD_JOIN) {
 		vxlan_mcast_add(&dp->vxlan_igmp_table, igmp_ip,
 				vxlan_port, &result);
-	} else if (igmp_cmd == VXLAN_IGMP_CMD_LEAVE) {
-		result = vxlan_mcast_delete(&dp->vxlan_igmp_table,
-				igmp_ip, vxlan_port);
-	} else {
-		result = -EINVAL;
-		goto unlock_exit;
 	}
 
-	if (result == 0) {
-		lock_sock(sk);
-		if (igmp_cmd == VXLAN_IGMP_CMD_JOIN) {
-			result = ip_mc_join_group(sk, &mreq);
-		} else {
-			result = ip_mc_leave_group(sk, &mreq);
+	if (result != 0)
+		goto unlock_exit;
+
+	lock_sock(sk);
+	if (igmp_cmd == VXLAN_IGMP_CMD_JOIN) {
+		result = ip_mc_join_group(sk, &mreq);
+		/* if join fails remove entry from mcast table */
+		if (result != 0) {
+			vxlan_mcast_delete(&dp->vxlan_igmp_table,	
+				igmp_ip, vxlan_port);
 		}
-		release_sock(sk);
+	} else if (igmp_cmd == VXLAN_IGMP_CMD_LEAVE) {
+		result = ip_mc_leave_group(sk, &mreq);
+	} else {
+		result = -EINVAL;
+	}
+	release_sock(sk);
+
+	if (result != 0)
+		goto unlock_exit;
+
+	if (igmp_cmd == VXLAN_IGMP_CMD_LEAVE) {
+		result = vxlan_mcast_delete(&dp->vxlan_igmp_table,
+				igmp_ip, vxlan_port);
 	}
 
 unlock_exit:
 	rcu_read_unlock();
 
-	printk(KERN_ERR "cmd %d, vxlan-port %d, ip %x \n",
+	printk(KERN_DEBUG "cmd %d, vxlan-port %d, ip %x \n",
 		igmp_cmd, vxlan_port, igmp_ip);
 
 	return result;
@@ -241,7 +251,7 @@ int vxlan_dump_igmp(struct datapath *dp, u16 vxlan_port, u32* buf)
 
 		rcu_read_unlock();
 	}
-	printk(KERN_ERR "count %d, returned %d\n", 
+	printk(KERN_DEBUG "count %d, returned %d\n", 
 		atomic_read(&dp->vxlan_igmp_table.n_entries), j);
 	return j;
 }
