@@ -32,7 +32,7 @@
 #include "datapath.h"
 #include "vxlan-mcast.h"
 
-struct vxlan_sock *vxlan_find_sock(struct net *net, __be16 port);
+struct vxlan_sock *vxlan_find_sock(struct datapath *dp, __be16 port);
 
 static struct kmem_cache *vxlan_mcast_cache;
 
@@ -53,12 +53,13 @@ static u32 vxlan_mcast_hash(u32 ip, u16 port)
 	return jhash_2words(ip, (__force u32) port, 0);
 }
 
+/* Called with the bucket spinlock */
 static struct vxlan_mcast_entry *
 vxlan_mcast_find__(struct hlist_head *head, u32 hash, u32 ip, u16 port)
 {
 	struct vxlan_mcast_entry *e = NULL;
 
-	hlist_for_each_entry_rcu(e, head, node) {
+	hlist_for_each_entry(e, head, node) {
 		if (hash == e->hash && ip == e->ip && port == e->port)
 		    break;
 	}
@@ -173,7 +174,7 @@ void vxlan_mcast_destroy(struct vxlan_mcast_table *table)
 int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 			 u8 igmp_cmd, u32 igmp_ip)
 {
-	int result;
+	int result = 0;
 	struct vxlan_sock *vs;
 	struct sock *sk;
 	struct ip_mreqn mreq = {
@@ -181,13 +182,15 @@ int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 		.imr_ifindex          = 0,
 	};
 
-	vs = vxlan_find_sock(dp->net, vxlan_port);
-	if (!vs)
-		return -EINVAL;
+	rcu_read_lock();
+
+	vs = vxlan_find_sock(dp, vxlan_port);
+	if (!vs) {
+		result = -EINVAL;
+		goto unlock_exit;
+	}
 	sk = vs->sock->sk;
 
-	printk(KERN_ERR "cmd %d, vxlan-port %d, ip %x \n",
-		igmp_cmd, vxlan_port, igmp_ip);
 
 	if (igmp_cmd == VXLAN_IGMP_CMD_JOIN) {
 		vxlan_mcast_add(&dp->vxlan_igmp_table, igmp_ip,
@@ -196,7 +199,8 @@ int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 		result = vxlan_mcast_delete(&dp->vxlan_igmp_table,
 				igmp_ip, vxlan_port);
 	} else {
-		return -EINVAL;
+		result = -EINVAL;
+		goto unlock_exit;
 	}
 
 	if (result == 0) {
@@ -208,6 +212,13 @@ int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 		}
 		release_sock(sk);
 	}
+
+unlock_exit:
+	rcu_read_unlock();
+
+	printk(KERN_ERR "cmd %d, vxlan-port %d, ip %x \n",
+		igmp_cmd, vxlan_port, igmp_ip);
+
 	return result;
 }
 
@@ -219,12 +230,16 @@ int vxlan_dump_igmp(struct datapath *dp, u16 vxlan_port, u32* buf)
 			&dp->vxlan_igmp_table.buckets[i];
 		struct vxlan_mcast_entry *e;
 
+		rcu_read_lock();
+
 		hlist_for_each_entry_rcu(e, &bucket->head, node) {
 			if (vxlan_port == e->port)
 				buf[j++] = e->ip;
 			if (j == 1024)
-				return j;
+				break;
 		}
+
+		rcu_read_unlock();
 	}
 	printk(KERN_ERR "count %d, returned %d\n", 
 		atomic_read(&dp->vxlan_igmp_table.n_entries), j);

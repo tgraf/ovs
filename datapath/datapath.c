@@ -2094,9 +2094,9 @@ struct genl_family dp_vport_genl_family = {
 
 static const struct nla_policy
 vxlan_config_policy[OVS_CONFIG_ATTR_VXLAN_MAX + 1] = {
-        [OVS_CONFIG_ATTR_VXLAN_PORT] = { .type = NLA_U16 },
+	[OVS_CONFIG_ATTR_VXLAN_PORT] = { .type = NLA_U16 },
 	[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD] = { .type = NLA_U8 },
-        [OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP] = { .type = NLA_UNSPEC },
+	[OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP] = { .type = NLA_UNSPEC },
 };
 
 static const struct nla_policy config_policy[OVS_CONFIG_ATTR_MAX + 1] = {
@@ -2126,23 +2126,28 @@ static int vxlan_configure(struct datapath *dp, int ifindex, struct nlattr *nla,
 		u8 igmp_cmd;
 		u32 igmp_ip;
 
-		if (!(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD]) &&
-		      attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP])
-		    return -1;
+		if (!(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD] &&
+		      attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP])) {
+		    OVS_NLERR(true,
+			      "vxlan mcast config requires both igmp cmd and group");
+		    return -EINVAL;
+		}
 
 		igmp_cmd = nla_get_u8(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_CMD]);
 		igmp_ip = nla_get_u32(attrs[OVS_CONFIG_ATTR_VXLAN_IGMP_GROUP]);
+
 		return vxlan_configure_igmp(dp, vxlan_port, igmp_cmd, igmp_ip);
 
 	} else {
 	/* Get attribute */
 		struct ovs_header *ovs_header;
 		struct nlattr *nest;
+
 		group_table = vmalloc(4 * 1024);
 		if (!group_table)
 			return -ENOMEM;
 
-		reply = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+		reply = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 		if (!reply) {
 			vfree(group_table);
 			return -ENOMEM;
