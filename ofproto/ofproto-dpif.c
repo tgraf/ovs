@@ -5234,15 +5234,15 @@ ofproto_unixctl_init(void)
                              NULL);
     unixctl_command_register("dpif/dump-flows", "[-m] bridge", 1, 2,
                              ofproto_unixctl_dpif_dump_flows, NULL);
-    unixctl_command_register("dpif/vxlan-mcast-join",
+    unixctl_command_register("dpif/tnl/igmp-join",
                              "bridge <port> <address>",
                              3, 3, ofproto_unixctl_dpif_vxlan_igmp_join,
                              NULL);
-    unixctl_command_register("dpif/vxlan-mcast-leave",
+    unixctl_command_register("dpif/tnl/igmp-leave",
                              "<bridge> <port> <address>",
                              3, 3, ofproto_unixctl_dpif_vxlan_igmp_leave,
                              NULL);
-    unixctl_command_register("dpif/vxlan-mcast-dump",
+    unixctl_command_register("dpif/tnl/igmp-dump",
                              "<bridge> <port>", 2, 2,
                              ofproto_unixctl_dpif_vxlan_igmp_show,
                              NULL);
