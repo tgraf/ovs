@@ -196,7 +196,7 @@ int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 				vxlan_port, &result);
 	}
 
-	if (result != 0)
+	if (result == -ENOMEM)
 		goto unlock_exit;
 
 	lock_sock(sk);
