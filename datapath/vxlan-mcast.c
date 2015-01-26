@@ -28,7 +28,6 @@
 #include <net/vxlan.h>
 #include <net/net_namespace.h>
 #include <net/udp.h>
-#include <net/udp_tunnel.h>
 #include "datapath.h"
 #include "vxlan-mcast.h"
 
