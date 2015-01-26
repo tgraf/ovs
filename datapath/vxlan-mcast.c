@@ -202,13 +202,20 @@ int vxlan_configure_igmp(struct datapath *dp, u16 vxlan_port,
 	lock_sock(sk);
 	if (igmp_cmd == VXLAN_IGMP_CMD_JOIN) {
 		result = ip_mc_join_group(sk, &mreq);
+		/* If entry already exists ignore error */
+		if (result == -EADDRINUSE)
+			result = 0;
 		/* if join fails remove entry from mcast table */
 		if (result != 0) {
 			vxlan_mcast_delete(&dp->vxlan_igmp_table,	
 				igmp_ip, vxlan_port);
 		}
 	} else if (igmp_cmd == VXLAN_IGMP_CMD_LEAVE) {
-		result = ip_mc_leave_group(sk, &mreq);
+                /* only possible return values here are -ENODEV
+                 * and -EADDRNOTAVAIL and both indicate the igmp
+                 * code has no knowledge of this address. So ignore
+                 * return value and proceed with delete. */
+		ip_mc_leave_group(sk, &mreq);
 	} else {
 		result = -EINVAL;
 	}
