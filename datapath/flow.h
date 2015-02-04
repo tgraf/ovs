@@ -32,6 +32,7 @@
 #include <linux/time.h>
 #include <linux/flex_array.h>
 #include <net/inet_ecn.h>
+#include <net/ip_tunnels.h>
 
 struct sk_buff;
 
@@ -177,6 +178,14 @@ struct sw_flow_key {
 			} nd;
 		} ipv6;
 	};
+	struct {
+		/* Connection tracking fields. */
+		u16 zone;
+		u32 mark;
+		u8 state;
+		struct ovs_key_conn_label label;
+	} conn;
+
 } __aligned(BITS_PER_LONG/8); /* Ensure that we can do comparisons as longs. */
 
 struct sw_flow_key_range {
@@ -275,6 +284,7 @@ u64 ovs_flow_used_time(unsigned long flow_jiffies);
 
 /* Update the non-metadata part of the flow key using skb. */
 int ovs_flow_key_update(struct sk_buff *skb, struct sw_flow_key *key);
+
 int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 			 struct sk_buff *skb,
 			 struct sw_flow_key *key);

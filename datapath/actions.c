@@ -37,6 +37,7 @@
 
 #include "datapath.h"
 #include "gso.h"
+#include "conntrack.h"
 #include "vlan.h"
 #include "vport.h"
 
@@ -707,6 +708,18 @@ static int execute_set_action(struct sk_buff *skb, struct sw_flow_key *key,
 	case OVS_KEY_ATTR_MPLS:
 		err = set_mpls(skb, key, nla_data(nested_attr));
 		break;
+
+	case OVS_KEY_ATTR_CONN_MARK:
+		err = ovs_ct_set_mark(skb, key, nla_get_u32(nested_attr), 0xffffffff);
+		break;
+
+	case OVS_KEY_ATTR_CONN_LABEL: {
+		struct ovs_key_conn_label mask;
+
+		memset(&mask, 0xff, sizeof(mask));
+		err = ovs_ct_set_label(skb, key, nla_data(nested_attr), &mask);
+		break;
+	}
 	}
 
 	return err;
@@ -827,6 +840,10 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 
 		case OVS_ACTION_ATTR_SAMPLE:
 			err = sample(dp, skb, key, a);
+			break;
+
+		case OVS_ACTION_ATTR_CT:
+			err = ovs_ct_execute(skb, key, nla_data(a));
 			break;
 		}
 
