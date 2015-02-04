@@ -37,6 +37,7 @@
 
 #include "datapath.h"
 #include "gso.h"
+#include "ovs_conntrack.h"
 #include "vlan.h"
 #include "vport.h"
 
@@ -827,6 +828,10 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 
 		case OVS_ACTION_ATTR_SAMPLE:
 			err = sample(dp, skb, key, a);
+			break;
+
+		case OVS_ACTION_ATTR_CT:
+			err = ovs_ct_execute(skb, key, nla_data(a));
 			break;
 		}
 

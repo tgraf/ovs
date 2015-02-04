@@ -525,6 +525,7 @@ static int ovs_packet_cmd_execute(struct sk_buff *skb, struct genl_info *info)
 	struct sk_buff *packet;
 	struct sw_flow *flow;
 	struct sw_flow_actions *sf_acts;
+	struct net *net = sock_net(skb->sk);
 	struct datapath *dp;
 	struct ethhdr *eth;
 	struct vport *input_vport;
@@ -569,7 +570,7 @@ static int ovs_packet_cmd_execute(struct sk_buff *skb, struct genl_info *info)
 	if (err)
 		goto err_flow_free;
 
-	err = ovs_nla_copy_actions(a[OVS_PACKET_ATTR_ACTIONS],
+	err = ovs_nla_copy_actions(net, a[OVS_PACKET_ATTR_ACTIONS],
 				   &flow->key, &acts, log);
 	if (err)
 		goto err_flow_free;
@@ -875,6 +876,7 @@ static struct sk_buff *ovs_flow_cmd_build_info(const struct sw_flow *flow,
 
 static int ovs_flow_cmd_new(struct sk_buff *skb, struct genl_info *info)
 {
+	struct net *net = sock_net(skb->sk);
 	struct nlattr **a = info->attrs;
 	struct ovs_header *ovs_header = info->userhdr;
 	struct sw_flow *flow = NULL, *new_flow;
@@ -924,7 +926,7 @@ static int ovs_flow_cmd_new(struct sk_buff *skb, struct genl_info *info)
 		goto err_kfree_flow;
 
 	/* Validate actions. */
-	error = ovs_nla_copy_actions(a[OVS_FLOW_ATTR_ACTIONS], &new_flow->key,
+	error = ovs_nla_copy_actions(net, a[OVS_FLOW_ATTR_ACTIONS], &new_flow->key,
 				     &acts, log);
 	if (error) {
 		OVS_NLERR(log, "Flow actions may not be safe on all matching packets.");
@@ -1033,7 +1035,7 @@ error:
 }
 
 /* Factor out action copy to avoid "Wframe-larger-than=1024" warning. */
-static struct sw_flow_actions *get_flow_actions(const struct nlattr *a,
+static struct sw_flow_actions *get_flow_actions(struct net *net, const struct nlattr *a,
 						const struct sw_flow_key *key,
 						const struct sw_flow_mask *mask,
 						bool log)
@@ -1043,7 +1045,7 @@ static struct sw_flow_actions *get_flow_actions(const struct nlattr *a,
 	int error;
 
 	ovs_flow_mask_key(&masked_key, key, mask);
-	error = ovs_nla_copy_actions(a, &masked_key, &acts, log);
+	error = ovs_nla_copy_actions(net, a, &masked_key, &acts, log);
 	if (error) {
 		OVS_NLERR(log,
 			  "Actions may not be safe on all matching packets");
@@ -1055,6 +1057,7 @@ static struct sw_flow_actions *get_flow_actions(const struct nlattr *a,
 
 static int ovs_flow_cmd_set(struct sk_buff *skb, struct genl_info *info)
 {
+	struct net *net = sock_net(skb->sk);
 	struct nlattr **a = info->attrs;
 	struct ovs_header *ovs_header = info->userhdr;
 	struct sw_flow_key key;
@@ -1086,7 +1089,7 @@ static int ovs_flow_cmd_set(struct sk_buff *skb, struct genl_info *info)
 
 	/* Validate actions. */
 	if (a[OVS_FLOW_ATTR_ACTIONS]) {
-		acts = get_flow_actions(a[OVS_FLOW_ATTR_ACTIONS], &key, &mask,
+		acts = get_flow_actions(net, a[OVS_FLOW_ATTR_ACTIONS], &key, &mask,
 					log);
 		if (IS_ERR(acts)) {
 			error = PTR_ERR(acts);
