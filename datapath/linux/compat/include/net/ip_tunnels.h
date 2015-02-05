@@ -3,7 +3,7 @@
 
 #include <linux/version.h>
 #if defined(HAVE_GRE_HANDLE_OFFLOADS) && \
-     LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0) && \
+     LINUX_VERSION_CODE > KERNEL_VERSION(3,10,0) && \
      defined(HAVE_VXLAN_XMIT_SKB)
 /* RHEL6 and RHEL7 both has backported tunnel API but RHEL6 has
  * older version, so avoid using RHEL6 backports.
