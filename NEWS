@@ -15,6 +15,9 @@ Post-v2.3.0
    - Add support for connection tracking through the new "conntrack" action
      and "conn_state" match field.  Only available on Linux kernels with
      the connection tracking module loaded.
+   - Add support for setting and matching the "conn_mark" field that
+     associates the mark with a connection tracking module.  Only
+     available on systems that support connection tracking.
    - The "learn" action supports a new flag "delete_learned" that causes
      the learned flows to be deleted when the flow with the "learn" action
      is deleted.
