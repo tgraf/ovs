@@ -329,6 +329,7 @@ odp_execute_set_action(struct dp_packet *packet, const struct nlattr *a)
     case OVS_KEY_ATTR_TCP_FLAGS:
     case OVS_KEY_ATTR_CONN_STATE:
     case OVS_KEY_ATTR_CONN_ZONE:
+    case OVS_KEY_ATTR_CONN_MARK:
     case __OVS_KEY_ATTR_MAX:
     default:
         OVS_NOT_REACHED();
@@ -420,6 +421,7 @@ odp_execute_masked_set_action(struct dp_packet *packet,
     case OVS_KEY_ATTR_UNSPEC:
     case OVS_KEY_ATTR_CONN_STATE:
     case OVS_KEY_ATTR_CONN_ZONE:
+    case OVS_KEY_ATTR_CONN_MARK:
     case OVS_KEY_ATTR_ENCAP:
     case OVS_KEY_ATTR_ETHERTYPE:
     case OVS_KEY_ATTR_IN_PORT:
@@ -486,7 +488,17 @@ requires_datapath_assistance(const struct nlattr *a)
         return true;
 
     case OVS_ACTION_ATTR_SET:
-    case OVS_ACTION_ATTR_SET_MASKED:
+    case OVS_ACTION_ATTR_SET_MASKED: {
+        const struct nlattr *set = nl_attr_get(a);
+        enum ovs_key_attr set_type = nl_attr_type(set);
+
+        /* Conntrack set_field() actions need to be executed in datapath. */
+        if (set_type == OVS_KEY_ATTR_CONN_MARK) {
+            return true;
+        }
+        return false;
+    }
+
     case OVS_ACTION_ATTR_PUSH_VLAN:
     case OVS_ACTION_ATTR_POP_VLAN:
     case OVS_ACTION_ATTR_SAMPLE:
