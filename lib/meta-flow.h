@@ -567,6 +567,21 @@ enum OVS_PACKED_ENUM mf_field_id {
      */
     MFF_CONN_STATE,
 
+    /* "conn_zone".
+     *
+     * Connection tracking zone.  The field is populated by the
+     * NXAST_CT action.
+     *
+     * Type: be16.
+     * Maskable: no.
+     * Formatting: hexadecimal.
+     * Prerequisites: none.
+     * Access: read-only.
+     * NXM: NXM_NX_CONN_ZONE(40) since v2.4.
+     * OXM: none.
+     */
+    MFF_CONN_ZONE,
+
 #if FLOW_N_REGS == 8
     /* "reg<N>".
      *

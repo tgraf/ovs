@@ -113,6 +113,7 @@ ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
     case OVS_KEY_ATTR_PRIORITY: return "skb_priority";
     case OVS_KEY_ATTR_SKB_MARK: return "skb_mark";
     case OVS_KEY_ATTR_CONN_STATE: return "conn_state";
+    case OVS_KEY_ATTR_CONN_ZONE: return "conn_zone";
     case OVS_KEY_ATTR_TUNNEL: return "tunnel";
     case OVS_KEY_ATTR_IN_PORT: return "in_port";
     case OVS_KEY_ATTR_ETHERNET: return "eth";
@@ -1239,6 +1240,7 @@ odp_flow_key_attr_len(uint16_t type)
     case OVS_KEY_ATTR_DP_HASH: return 4;
     case OVS_KEY_ATTR_RECIRC_ID: return 4;
     case OVS_KEY_ATTR_CONN_STATE: return 1;
+    case OVS_KEY_ATTR_CONN_ZONE: return 2;
     case OVS_KEY_ATTR_TUNNEL: return -2;
     case OVS_KEY_ATTR_IN_PORT: return 4;
     case OVS_KEY_ATTR_ETHERNET: return sizeof(struct ovs_key_ethernet);
@@ -1868,6 +1870,10 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
         }
         break;
 
+    case OVS_KEY_ATTR_CONN_ZONE:
+        ds_put_format(ds, "%"PRIx16, nl_attr_get_u16(a));
+        break;
+
     case OVS_KEY_ATTR_TUNNEL: {
         struct flow_tnl key, mask_;
         struct flow_tnl *mask = ma ? &mask_ : NULL;
@@ -2368,6 +2374,26 @@ scan_u8(const char *s, uint8_t *key, uint8_t *mask)
 }
 
 static int
+scan_u16(const char *s, uint16_t *key, uint16_t *mask)
+{
+    int n;
+
+    if (ovs_scan(s, "%"SCNi16"%n", key, &n)) {
+        int len = n;
+
+        if (mask) {
+            if (ovs_scan(s + len, "/%"SCNi16"%n", mask, &n)) {
+                len += n;
+            } else {
+                *mask = UINT16_MAX;
+            }
+        }
+        return len;
+    }
+    return 0;
+}
+
+static int
 scan_u32(const char *s, uint32_t *key, uint32_t *mask)
 {
     int n;
@@ -2784,6 +2810,7 @@ parse_odp_key_mask_attr(const char *s, const struct simap *port_names,
     SCAN_SINGLE("dp_hash(", uint32_t, u32, OVS_KEY_ATTR_DP_HASH);
 
     SCAN_SINGLE("conn_state(", uint8_t, conn_state, OVS_KEY_ATTR_CONN_STATE);
+    SCAN_SINGLE_NO_MASK("conn_zone(", uint16_t, u16, OVS_KEY_ATTR_CONN_ZONE);
 
     SCAN_BEGIN("tunnel(", struct flow_tnl) {
         SCAN_FIELD("tun_id=", be64, tun_id);
@@ -3020,6 +3047,9 @@ odp_flow_key_from_flow__(struct ofpbuf *buf, const struct flow *flow,
     if (data->conn_state) {
         nl_msg_put_u8(buf, OVS_KEY_ATTR_CONN_STATE, data->conn_state);
     }
+    if (data->conn_zone) {
+        nl_msg_put_u16(buf, OVS_KEY_ATTR_CONN_ZONE, data->conn_zone);
+    }
     if (recirc) {
         nl_msg_put_u32(buf, OVS_KEY_ATTR_RECIRC_ID, data->recirc_id);
         nl_msg_put_u32(buf, OVS_KEY_ATTR_DP_HASH, data->dp_hash);
@@ -3220,6 +3250,9 @@ odp_key_from_pkt_metadata(struct ofpbuf *buf, const struct pkt_metadata *md)
     if (md->conn_state) {
         nl_msg_put_u8(buf, OVS_KEY_ATTR_CONN_STATE, md->conn_state);
     }
+    if (md->conn_zone) {
+        nl_msg_put_u16(buf, OVS_KEY_ATTR_CONN_ZONE, md->conn_zone);
+    }
 
     /* Add an ingress port attribute if 'odp_in_port' is not the magical
      * value "ODPP_NONE". */
@@ -3270,6 +3303,10 @@ odp_key_to_pkt_metadata(const struct nlattr *key, size_t key_len,
         case OVS_KEY_ATTR_CONN_STATE:
             md->conn_state = nl_attr_get_u8(nla);
             wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_STATE);
+            break;
+        case OVS_KEY_ATTR_CONN_ZONE:
+            md->conn_zone = nl_attr_get_u16(nla);
+            wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_ZONE);
             break;
         case OVS_KEY_ATTR_TUNNEL: {
             enum odp_key_fitness res;
@@ -3825,6 +3862,11 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CONN_STATE)) {
         flow->conn_state = nl_attr_get_u8(attrs[OVS_KEY_ATTR_CONN_STATE]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_STATE;
+    }
+
+    if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CONN_ZONE)) {
+        flow->conn_zone = nl_attr_get_u16(attrs[OVS_KEY_ATTR_CONN_ZONE]);
+        expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_ZONE;
     }
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_TUNNEL)) {

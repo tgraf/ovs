@@ -292,6 +292,13 @@ match_set_conn_state_masked(struct match *match, uint8_t conn_state,
 }
 
 void
+match_set_conn_zone(struct match *match, uint16_t conn_zone)
+{
+    match->flow.conn_zone = conn_zone;
+    match->wc.masks.conn_zone = UINT16_MAX;
+}
+
+void
 match_set_dl_type(struct match *match, ovs_be16 dl_type)
 {
     match->wc.masks.dl_type = OVS_BE16_MAX;
@@ -825,6 +832,21 @@ format_ipv6_netmask(struct ds *s, const char *name,
 }
 
 static void
+format_uint16_masked(struct ds *s, const char *name,
+                   uint16_t value, uint16_t mask)
+{
+    if (mask != 0) {
+        ds_put_format(s, "%s=", name);
+        if (mask == UINT16_MAX) {
+            ds_put_format(s, "%"PRIu16, value);
+        } else {
+            ds_put_format(s, "0x%"PRIx16"/0x%"PRIx16, value, mask);
+        }
+        ds_put_char(s, ',');
+    }
+}
+
+static void
 format_be16_masked(struct ds *s, const char *name,
                    ovs_be16 value, ovs_be16 mask)
 {
@@ -972,6 +994,10 @@ match_format(const struct match *match, struct ds *s, int priority)
                                 f->conn_state, wc->masks.conn_state);
         }
         ds_put_char(s, ',');
+    }
+
+    if (wc->masks.conn_zone) {
+        format_uint16_masked(s, "conn_zone", f->conn_zone, wc->masks.conn_zone);
     }
 
     if (wc->masks.dl_type) {

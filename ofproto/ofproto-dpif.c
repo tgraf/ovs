@@ -1265,6 +1265,7 @@ check_##FIELD(struct dpif_backer *backer)                                   \
 }
 
 CHECK_FEATURE(conn_state)
+CHECK_FEATURE(conn_zone)
 
 #undef CHECK_FEATURE
 
@@ -1280,6 +1281,7 @@ check_support(struct dpif_backer *backer)
     backer->support.ufid = check_ufid(backer);
     backer->support.tnl_push_pop = dpif_supports_tnl_push_pop(backer->dpif);
     backer->support.conn_state = check_conn_state(backer);
+    backer->support.conn_zone = check_conn_zone(backer);
 }
 
 static int
@@ -3951,7 +3953,8 @@ rule_check(struct rule *rule)
 
     minimatch_expand(&rule->cr.match, &match);
 
-    if (match.wc.masks.conn_state && !ofproto->backer->support.conn_state) {
+    if ((match.wc.masks.conn_state && !ofproto->backer->support.conn_state)
+        || (match.wc.masks.conn_zone && !ofproto->backer->support.conn_zone)) {
         return OFPERR_OFPBMC_BAD_FIELD;
     }
     if (match.wc.masks.conn_state & CS_UNSUPPORTED_MASK) {

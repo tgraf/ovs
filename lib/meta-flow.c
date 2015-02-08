@@ -134,6 +134,8 @@ mf_is_all_wild(const struct mf_field *mf, const struct flow_wildcards *wc)
         return !wc->masks.pkt_mark;
     case MFF_CONN_STATE:
         return !wc->masks.conn_state;
+    case MFF_CONN_ZONE:
+        return !wc->masks.conn_zone;
     CASE_MFF_REGS:
         return !wc->masks.regs[mf->id - MFF_REG0];
     CASE_MFF_XREGS:
@@ -385,6 +387,7 @@ mf_is_value_valid(const struct mf_field *mf, const union mf_value *value)
     case MFF_SKB_PRIORITY:
     case MFF_PKT_MARK:
     case MFF_CONN_STATE:
+    case MFF_CONN_ZONE:
     CASE_MFF_REGS:
     CASE_MFF_XREGS:
     case MFF_ETH_SRC:
@@ -528,6 +531,10 @@ mf_get_value(const struct mf_field *mf, const struct flow *flow,
 
     case MFF_CONN_STATE:
         value->u8 = flow->conn_state;
+        break;
+
+    case MFF_CONN_ZONE:
+        value->be16 = htons(flow->conn_zone);
         break;
 
     CASE_MFF_REGS:
@@ -753,6 +760,10 @@ mf_set_value(const struct mf_field *mf,
 
     case MFF_CONN_STATE:
         match_set_conn_state(match, value->u8);
+        break;
+
+    case MFF_CONN_ZONE:
+        match_set_conn_zone(match, ntohs(value->be16));
         break;
 
     CASE_MFF_REGS:
@@ -989,6 +1000,10 @@ mf_set_flow_value(const struct mf_field *mf,
 
     case MFF_CONN_STATE:
         flow->conn_state = value->u8;
+        break;
+
+    case MFF_CONN_ZONE:
+        flow->conn_zone = ntohs(value->be16);
         break;
 
     CASE_MFF_REGS:
@@ -1261,6 +1276,11 @@ mf_set_wild(const struct mf_field *mf, struct match *match)
         match->wc.masks.conn_state = 0;
         break;
 
+    case MFF_CONN_ZONE:
+        match->flow.conn_zone = 0;
+        match->wc.masks.conn_zone = 0;
+        break;
+
     CASE_MFF_REGS:
         match_set_reg_masked(match, mf->id - MFF_REG0, 0, 0);
         break;
@@ -1438,6 +1458,7 @@ mf_set(const struct mf_field *mf,
     }
 
     switch (mf->id) {
+    case MFF_CONN_ZONE:
     case MFF_RECIRC_ID:
     case MFF_CONJ_ID:
     case MFF_IN_PORT:

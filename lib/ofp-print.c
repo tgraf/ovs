@@ -161,6 +161,9 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
     if (pin.fmd.conn_state != 0) {
         ds_put_format(string, " conn_state=0x%"PRIx8, pin.fmd.conn_state);
     }
+    if (pin.fmd.conn_zone != 0) {
+        ds_put_format(string, " conn_zone=0x%"PRIx16, pin.fmd.conn_zone);
+    }
 
     ds_put_format(string, " (via %s)",
                   ofputil_packet_in_reason_to_string(pin.reason, reasonbuf,
