@@ -106,10 +106,12 @@ struct flow {
     union flow_in_port in_port; /* Input port.*/
     uint32_t recirc_id;         /* Must be exact match. */
     uint32_t conj_id;           /* Conjunction ID. */
+    uint32_t conn_mark;         /* Connection mark. With L3 to avoid L4 match.*/
     uint16_t conn_zone;         /* Connection Zone. */
     uint8_t conn_state;         /* Connection state. */
-    uint8_t pad1[3];            /* Pad to 32 bits. */
+    uint8_t pad1[1];            /* Pad to 64 bits. */
     ofp_port_t actset_output;   /* Output port in action set. */
+    uint8_t pad2[6];            /* Pad to 64 bits. */
 
     /* L2, Order the same as in the Ethernet header! (64-bit aligned) */
     uint8_t dl_dst[ETH_ADDR_LEN]; /* Ethernet destination address. */
@@ -132,7 +134,7 @@ struct flow {
     uint8_t arp_sha[ETH_ADDR_LEN]; /* ARP/ND source hardware address. */
     uint8_t arp_tha[ETH_ADDR_LEN]; /* ARP/ND target hardware address. */
     ovs_be16 tcp_flags;         /* TCP flags. With L3 to avoid matching L4. */
-    ovs_be16 pad2;              /* Pad to 64 bits. */
+    ovs_be16 pad3;              /* Pad to 64 bits. */
 
     /* L4 (64-bit aligned) */
     ovs_be16 tp_src;            /* TCP/UDP/SCTP source port. */
@@ -157,7 +159,7 @@ BUILD_ASSERT_DECL(sizeof(struct flow) % sizeof(uint64_t) == 0);
 
 /* Remember to update FLOW_WC_SEQ when changing 'struct flow'. */
 BUILD_ASSERT_DECL(offsetof(struct flow, igmp_group_ip4) + sizeof(uint32_t)
-                  == sizeof(struct flow_tnl) + 192
+                  == sizeof(struct flow_tnl) + 200
                   && FLOW_WC_SEQ == 31);
 
 /* Incremental points at which flow classification may be performed in
@@ -194,6 +196,7 @@ struct flow_metadata {
     uint32_t regs[FLOW_N_REGS];      /* Registers. */
     uint32_t pkt_mark;               /* Packet mark. */
     ofp_port_t in_port;              /* OpenFlow port or zero. */
+    uint32_t conn_mark;              /* Connection mark. */
     uint16_t conn_zone;              /* Connection zone. */
     uint8_t conn_state;              /* Connection state. */
 };
@@ -763,6 +766,7 @@ pkt_metadata_from_flow(const struct flow *flow)
     md.in_port = flow->in_port;
     md.conn_state = flow->conn_state;
     md.conn_zone = flow->conn_zone;
+    md.conn_mark = flow->conn_mark;
 
     return md;
 }

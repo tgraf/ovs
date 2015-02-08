@@ -1223,6 +1223,12 @@ Matches connection zone \fIvalue\fR exactly.  The zone is associated data with
 the connection tracker and can only be matched after running through the
 connection tracker through the \fBct\fR action.
 .
+.IP \fBconn_mark=\fIvalue\fR[\fB/\fImask\fR]
+Matches connection mark \fIvalue\fR either exactly or with optional
+\fImask\fR.  The mark is associated data with the connection tracker and
+can only be matched or set after running through the connection tracker
+through the \fBct\fR action.
+.
 .PP
 Defining IPv6 flows (those with \fBdl_type\fR equal to 0x86dd) requires
 support for NXM.  The following shorthand notations are available for

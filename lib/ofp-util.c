@@ -3305,6 +3305,7 @@ ofputil_decode_packet_in_finish(struct ofputil_packet_in *pin,
     pin->fmd.pkt_mark = match->flow.pkt_mark;
     pin->fmd.conn_state = match->flow.conn_state;
     pin->fmd.conn_zone = match->flow.conn_zone;
+    pin->fmd.conn_mark = match->flow.conn_mark;
 }
 
 enum ofperr
@@ -3452,6 +3453,10 @@ ofputil_packet_in_to_match(const struct ofputil_packet_in *pin,
     }
     if (pin->fmd.conn_zone != 0) {
         match_set_conn_zone(match, pin->fmd.conn_zone);
+    }
+
+    if (pin->fmd.conn_mark != 0) {
+        match_set_conn_mark(match, pin->fmd.conn_mark);
     }
 
     match_set_in_port(match, pin->fmd.in_port);
