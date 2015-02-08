@@ -121,6 +121,7 @@ void odp_portno_names_destroy(struct hmap *portno_names);
  *  OVS_KEY_ATTR_DP_HASH                 4    --     4      8
  *  OVS_KEY_ATTR_RECIRC_ID               4    --     4      8
  *  OVS_KEY_ATTR_CONN_STATE              1     3     4      8
+ *  OVS_KEY_ATTR_CONN_ZONE               2     2     4      8
  *  OVS_KEY_ATTR_ETHERNET               12    --     4     16
  *  OVS_KEY_ATTR_ETHERTYPE               2     2     4      8  (outer VLAN ethertype)
  *  OVS_KEY_ATTR_VLAN                    2     2     4      8
@@ -130,7 +131,7 @@ void odp_portno_names_destroy(struct hmap *portno_names);
  *  OVS_KEY_ATTR_ICMPV6                  2     2     4      8
  *  OVS_KEY_ATTR_ND                     28    --     4     32
  *  ----------------------------------------------------------
- *  total                                                 496
+ *  total                                                 504
  *
  * We include some slack space in case the calculation isn't quite right or we
  * add another field and forget to adjust this value.

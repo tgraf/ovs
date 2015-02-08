@@ -81,6 +81,7 @@ void match_set_pkt_mark_masked(struct match *, uint32_t pkt_mark, uint32_t mask)
 void match_set_conn_state(struct match *, uint8_t conn_state);
 void match_set_conn_state_masked(struct match *, uint8_t conn_state,
                                  uint8_t mask);
+void match_set_conn_zone(struct match *, uint16_t conn_zone);
 void match_set_skb_priority(struct match *, uint32_t skb_priority);
 void match_set_dl_type(struct match *, ovs_be16);
 void match_set_dl_src(struct match *, const uint8_t[ETH_ADDR_LEN]);

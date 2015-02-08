@@ -1000,6 +1000,10 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
         nxm_put_8m(b, MFF_CONN_STATE, oxm, flow->conn_state,
                    match->wc.masks.conn_state);
     }
+    if (match->wc.masks.conn_zone) {
+        nxm_put_16m(b, MFF_CONN_ZONE, oxm, htons(flow->conn_zone),
+                    htons(match->wc.masks.conn_zone));
+    }
 
     /* OpenFlow 1.1+ Metadata. */
     nxm_put_64m(b, MFF_METADATA, oxm,
