@@ -122,6 +122,16 @@ u8 ovs_ct_get_state(const struct sk_buff *skb)
 #endif /* CONFIG_NF_CONNTRACK || CONFIG_NF_CONNTRACK_MODULE */
 }
 
+u16 ovs_ct_get_zone(const struct sk_buff *skb)
+{
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+
+	ct = nf_ct_get(skb, &ctinfo);
+
+	return ct ? nf_ct_zone(ct) : NF_CT_DEFAULT_ZONE;
+}
+
 int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 		   const struct ovs_conntrack_info *info)
 {
@@ -148,6 +158,7 @@ int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 	skb_push(skb, nh_ofs);
 
 	key->phy.conn_state = ovs_ct_get_state(skb);
+	key->phy.conn_zone = ovs_ct_get_zone(skb);
 
 	return 0;
 

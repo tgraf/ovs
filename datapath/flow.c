@@ -709,6 +709,7 @@ int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
 	key->phy.in_port = OVS_CB(skb)->input_vport->port_no;
 	key->phy.skb_mark = skb->mark;
 	key->phy.conn_state = ovs_ct_get_state(skb);
+	key->phy.conn_zone = ovs_ct_get_zone(skb);
 	key->ovs_flow_hash = 0;
 	key->recirc_id = 0;
 

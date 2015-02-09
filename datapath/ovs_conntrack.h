@@ -29,6 +29,7 @@ int ovs_ct_action_to_attr(const struct nlattr *, struct sk_buff *);
 int ovs_ct_execute(struct sk_buff *, struct sw_flow_key *,
 		   const struct ovs_conntrack_info *);
 u8 ovs_ct_get_state(const struct sk_buff *skb);
+u16 ovs_ct_get_zone(const struct sk_buff *skb);
 void ovs_ct_free_acts(struct sw_flow_actions *sf_acts);
 
 #endif /* ovs_conntrack.h */
