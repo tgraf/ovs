@@ -44,7 +44,7 @@ static bool skb_has_valid_nfct(const struct net *net, u16 zone,
 	return true;
 }
 
-static int ovs_conntrack_lookup(struct nf_conn *tmpl, struct sk_buff *skb)
+static int ovs_ct_lookup__(struct nf_conn *tmpl, struct sk_buff *skb)
 {
 	struct net *net;
 	u16 zone = tmpl ? nf_ct_zone(tmpl) : NF_CT_DEFAULT_ZONE;
@@ -77,6 +77,28 @@ static int ovs_conntrack_lookup(struct nf_conn *tmpl, struct sk_buff *skb)
 	}
 
 	return 0;
+}
+
+int ovs_ct_lookup(struct net *net, u16 zone, struct sk_buff *skb)
+{
+	struct nf_conntrack_tuple t;
+	struct nf_conn *tmpl;
+	int err;
+
+	/* nf_ct_get_tuplepr ??? */
+
+#ifdef CONFIG_NF_CONNTRACK_ZONES
+	memset(&t, 0, sizeof(t));
+	tmpl = nf_conntrack_alloc(net, zone, &t, &t, GFP_KERNEL);
+	if (IS_ERR(tmpl))
+		return PTR_ERR(tmpl);
+#else
+	tmpl = NULL;
+#endif
+
+	err = ovs_ct_lookup__(tmpl, skb);
+	nf_ct_put(tmpl);
+	return err;
 }
 
 /* Map SKB connection state into the values used by flow definition. */
@@ -132,6 +154,40 @@ u16 ovs_ct_get_zone(const struct sk_buff *skb)
 	return ct ? nf_ct_zone(ct) : NF_CT_DEFAULT_ZONE;
 }
 
+u32 ovs_ct_get_mark(const struct sk_buff *skb)
+{
+#if defined(CONFIG_NF_CONNTRACK_MARK)
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	return ct ? ct->mark : 0;
+#else
+	return 0;
+#endif
+}
+
+int ovs_ct_set_mark(struct sk_buff *skb, struct sw_flow_key *key,
+		    u32 conn_mark)
+{
+#if defined(CONFIG_NF_CONNTRACK_MARK)
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct)
+		return -EINVAL;
+
+	if (ct->mark != conn_mark) {
+		ct->mark = conn_mark;
+		nf_conntrack_event_cache(IPCT_MARK, ct);
+		key->phy.conn_mark = conn_mark;
+	}
+#endif
+
+	return 0;
+}
+
 int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 		   const struct ovs_conntrack_info *info)
 {
@@ -142,7 +198,7 @@ int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 	/* The conntrack module expects to be working at L3. */
 	skb_pull(skb, nh_ofs);
 
-	if (ovs_conntrack_lookup(tmpl, skb))
+	if (ovs_ct_lookup__(tmpl, skb))
 		goto err_push_skb;
 
 	if (info->flags & OVS_CT_F_COMMIT) {
@@ -159,6 +215,7 @@ int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 
 	key->phy.conn_state = ovs_ct_get_state(skb);
 	key->phy.conn_zone = ovs_ct_get_zone(skb);
+	key->phy.conn_mark = ovs_ct_get_mark(skb);
 
 	return 0;
 

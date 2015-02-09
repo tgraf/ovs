@@ -129,6 +129,7 @@ struct sw_flow_key {
 	struct {
 		u32	priority;	/* Packet QoS priority. */
 		u32	skb_mark;	/* SKB mark. */
+		u32	conn_mark;	/* Connection mark. */
 		u16	in_port;	/* Input switch port (or DP_MAX_PORTS). */
 		u16	conn_zone;	/* Conntrack zone. */
 		u8	conn_state;	/* Connection state. */

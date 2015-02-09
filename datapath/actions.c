@@ -708,6 +708,10 @@ static int execute_set_action(struct sk_buff *skb, struct sw_flow_key *key,
 	case OVS_KEY_ATTR_MPLS:
 		err = set_mpls(skb, key, nla_data(nested_attr));
 		break;
+
+	case OVS_KEY_ATTR_CONN_MARK:
+		err = ovs_ct_set_mark(skb, key, nla_get_u32(nested_attr));
+		break;
 	}
 
 	return err;
@@ -921,3 +925,41 @@ void action_fifos_exit(void)
 {
 	free_percpu(action_fifos);
 }
+
+void ovs_reinit_skb(struct net *net, struct sk_buff *skb,
+		    const struct sw_flow *flow,
+		    const struct sw_flow_actions *acts)
+{
+#if defined(CONFIG_NF_CONNTRACK_MARK)
+	bool ct_required = false;
+	const struct nlattr *a;
+	int rem;
+
+	/* Hasn't been through conntrack before, so no skb->nfct to restore. */
+	if (!flow->key.phy.conn_state)
+		return;
+
+	/* If conntrack is performed on a packet which is subsequently sent
+	 * up to userspace, then on execute the returned packet won't have
+	 * conntrack available in the skb. Initialize it if it is needed.
+	 */
+	for (a = acts->actions, rem = acts->actions_len; rem > 0;
+	     a = nla_next(a, &rem)) {
+		if (nla_type(a) == OVS_ACTION_ATTR_CT)
+			break;
+
+		if (nla_type(a) == OVS_ACTION_ATTR_SET) {
+			struct nlattr *nested_attr = nla_data(a);
+
+			if (nla_type(nested_attr) == OVS_KEY_ATTR_CONN_MARK) {
+				ct_required = true;
+				break;
+			}
+		}
+	}
+
+	if (ct_required)
+		ovs_ct_lookup(net, 0, skb); /* xxx flow->phy.zone */
+#endif /* CONFIG_NF_CONNTRACK_MARK */
+}
+
