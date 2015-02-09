@@ -282,7 +282,7 @@ size_t ovs_key_attr_size(void)
 	/* Whenever adding new OVS_KEY_ FIELDS, we should consider
 	 * updating this function.
 	 */
-	BUILD_BUG_ON(OVS_KEY_ATTR_TUNNEL_INFO != 24);
+	BUILD_BUG_ON(OVS_KEY_ATTR_TUNNEL_INFO != 25);
 
 	return    nla_total_size(4)   /* OVS_KEY_ATTR_PRIORITY */
 		+ nla_total_size(0)   /* OVS_KEY_ATTR_TUNNEL */
@@ -293,6 +293,7 @@ size_t ovs_key_attr_size(void)
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_RECIRC_ID */
 		+ nla_total_size(1)   /* OVS_KEY_ATTR_CONN_STATE */
 		+ nla_total_size(2)   /* OVS_KEY_ATTR_CONN_ZONE */
+		+ nla_total_size(4)   /* OVS_KEY_ATTR_CONN_MARK */
 		+ nla_total_size(12)  /* OVS_KEY_ATTR_ETHERNET */
 		+ nla_total_size(2)   /* OVS_KEY_ATTR_ETHERTYPE */
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_VLAN */
@@ -344,6 +345,7 @@ static const struct ovs_len_tbl ovs_key_lens[OVS_KEY_ATTR_MAX + 1] = {
 	[OVS_KEY_ATTR_MPLS]	 = { .len = sizeof(struct ovs_key_mpls) },
 	[OVS_KEY_ATTR_CONN_STATE] = { .len = sizeof(u8) },
 	[OVS_KEY_ATTR_CONN_ZONE] = { .len = sizeof(u16) },
+	[OVS_KEY_ATTR_CONN_MARK] = { .len = sizeof(u32) },
 };
 static bool is_all_zero(const u8 *fp, size_t size)
 {
@@ -782,6 +784,12 @@ static int metadata_from_nlattrs(struct sw_flow_match *match,  u64 *attrs,
 
 		SW_FLOW_KEY_PUT(match, phy.conn_zone, conn_zone, is_mask);
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_ZONE);
+        }
+	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_MARK)) {
+		uint32_t mark = nla_get_u32(a[OVS_KEY_ATTR_CONN_MARK]);
+
+		SW_FLOW_KEY_PUT(match, phy.conn_mark, mark, is_mask);
+		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_MARK);
 	}
 	return 0;
 }
@@ -1335,6 +1343,9 @@ static int __ovs_nla_put_key(const struct sw_flow_key *swkey,
 	if (nla_put_u16(skb, OVS_KEY_ATTR_CONN_ZONE, output->phy.conn_zone))
 		goto nla_put_failure;
 
+	if (nla_put_u32(skb, OVS_KEY_ATTR_CONN_MARK, output->phy.conn_mark))
+		goto nla_put_failure;
+
 	nla = nla_reserve(skb, OVS_KEY_ATTR_ETHERNET, sizeof(*eth_key));
 	if (!nla)
 		goto nla_put_failure;
@@ -1870,6 +1881,7 @@ static int validate_set(const struct nlattr *a,
 	case OVS_KEY_ATTR_SKB_MARK:
 	case OVS_KEY_ATTR_CONN_STATE:
 	case OVS_KEY_ATTR_CONN_ZONE:
+	case OVS_KEY_ATTR_CONN_MARK:
 	case OVS_KEY_ATTR_ETHERNET:
 		break;
 
