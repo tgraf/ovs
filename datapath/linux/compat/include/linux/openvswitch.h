@@ -343,6 +343,7 @@ enum ovs_key_attr {
 				 * The implementation may restrict
 				 * the accepted length of the array. */
 	OVS_KEY_ATTR_CONN_STATE,/* u8 of OVS_CS_F_* */
+	OVS_KEY_ATTR_CONN_ZONE, /* u16 connection tracking zone. */
 
 #ifdef __KERNEL__
 	/* Only used within kernel data path. */

@@ -282,7 +282,7 @@ size_t ovs_key_attr_size(void)
 	/* Whenever adding new OVS_KEY_ FIELDS, we should consider
 	 * updating this function.
 	 */
-	BUILD_BUG_ON(OVS_KEY_ATTR_TUNNEL_INFO != 23);
+	BUILD_BUG_ON(OVS_KEY_ATTR_TUNNEL_INFO != 24);
 
 	return    nla_total_size(4)   /* OVS_KEY_ATTR_PRIORITY */
 		+ nla_total_size(0)   /* OVS_KEY_ATTR_TUNNEL */
@@ -292,6 +292,7 @@ size_t ovs_key_attr_size(void)
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_DP_HASH */
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_RECIRC_ID */
 		+ nla_total_size(1)   /* OVS_KEY_ATTR_CONN_STATE */
+		+ nla_total_size(2)   /* OVS_KEY_ATTR_CONN_ZONE */
 		+ nla_total_size(12)  /* OVS_KEY_ATTR_ETHERNET */
 		+ nla_total_size(2)   /* OVS_KEY_ATTR_ETHERTYPE */
 		+ nla_total_size(4)   /* OVS_KEY_ATTR_VLAN */
@@ -342,6 +343,7 @@ static const struct ovs_len_tbl ovs_key_lens[OVS_KEY_ATTR_MAX + 1] = {
 				     .next = ovs_tunnel_key_lens, },
 	[OVS_KEY_ATTR_MPLS]	 = { .len = sizeof(struct ovs_key_mpls) },
 	[OVS_KEY_ATTR_CONN_STATE] = { .len = sizeof(u8) },
+	[OVS_KEY_ATTR_CONN_ZONE] = { .len = sizeof(u16) },
 };
 static bool is_all_zero(const u8 *fp, size_t size)
 {
@@ -774,6 +776,12 @@ static int metadata_from_nlattrs(struct sw_flow_match *match,  u64 *attrs,
 
 		SW_FLOW_KEY_PUT(match, phy.conn_state, conn_state, is_mask);
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_STATE);
+	}
+	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_ZONE)) {
+		uint16_t conn_zone = nla_get_u16(a[OVS_KEY_ATTR_CONN_ZONE]);
+
+		SW_FLOW_KEY_PUT(match, phy.conn_zone, conn_zone, is_mask);
+		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_ZONE);
 	}
 	return 0;
 }
@@ -1324,6 +1332,9 @@ static int __ovs_nla_put_key(const struct sw_flow_key *swkey,
 	if (nla_put_u8(skb, OVS_KEY_ATTR_CONN_STATE, output->phy.conn_state))
 		goto nla_put_failure;
 
+	if (nla_put_u16(skb, OVS_KEY_ATTR_CONN_ZONE, output->phy.conn_zone))
+		goto nla_put_failure;
+
 	nla = nla_reserve(skb, OVS_KEY_ATTR_ETHERNET, sizeof(*eth_key));
 	if (!nla)
 		goto nla_put_failure;
@@ -1858,6 +1869,7 @@ static int validate_set(const struct nlattr *a,
 	case OVS_KEY_ATTR_PRIORITY:
 	case OVS_KEY_ATTR_SKB_MARK:
 	case OVS_KEY_ATTR_CONN_STATE:
+	case OVS_KEY_ATTR_CONN_ZONE:
 	case OVS_KEY_ATTR_ETHERNET:
 		break;
 
