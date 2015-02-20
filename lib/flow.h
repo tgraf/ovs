@@ -38,7 +38,7 @@ struct pkt_metadata;
 /* This sequence number should be incremented whenever anything involving flows
  * or the wildcarding of flows changes.  This will cause build assertion
  * failures in places which likely need to be updated. */
-#define FLOW_WC_SEQ 31
+#define FLOW_WC_SEQ 32
 
 /* Number of Open vSwitch extension 32-bit registers. */
 #define FLOW_N_REGS 8
@@ -110,6 +110,7 @@ struct flow {
     uint16_t conn_zone;         /* Connection Zone. */
     uint8_t conn_state;         /* Connection state. */
     uint8_t pad1[1];            /* Pad to 64 bits. */
+    ovs_u128 conn_label;        /* Connection label. */
     ofp_port_t actset_output;   /* Output port in action set. */
     uint8_t pad2[6];            /* Pad to 64 bits. */
 
@@ -159,8 +160,8 @@ BUILD_ASSERT_DECL(sizeof(struct flow) % sizeof(uint64_t) == 0);
 
 /* Remember to update FLOW_WC_SEQ when changing 'struct flow'. */
 BUILD_ASSERT_DECL(offsetof(struct flow, igmp_group_ip4) + sizeof(uint32_t)
-                  == sizeof(struct flow_tnl) + 200
-                  && FLOW_WC_SEQ == 31);
+                  == sizeof(struct flow_tnl) + 216
+                  && FLOW_WC_SEQ == 32);
 
 /* Incremental points at which flow classification may be performed in
  * segments.
@@ -196,6 +197,7 @@ struct flow_metadata {
     uint32_t regs[FLOW_N_REGS];      /* Registers. */
     uint32_t pkt_mark;               /* Packet mark. */
     ofp_port_t in_port;              /* OpenFlow port or zero. */
+    ovs_u128 conn_label;             /* Connection label. */
     uint32_t conn_mark;              /* Connection mark. */
     uint16_t conn_zone;              /* Connection zone. */
     uint8_t conn_state;              /* Connection state. */

@@ -330,3 +330,43 @@ SYN_RECV src=10.1.1.3 dst=10.1.1.4 sport=<cleared> dport=<cleared> src=10.1.1.4 
 
 OVS_KMOD_VSWITCHD_STOP
 AT_CLEANUP
+
+AT_SETUP([conntrack - conn_label])
+AT_SKIP_IF([test $HAVE_PYTHON = no])
+LOAD_MODULES([nf_conntrack_ipv4])
+OVS_KMOD_VSWITCHD_START(
+   [set-fail-mode br0 standalone -- ])
+
+ADD_NAMESPACES(at_ns0, at_ns1, at_ns2, at_ns3)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+ADD_VETH(p2, at_ns2, br0, "10.1.1.3/24")
+ADD_VETH(p3, at_ns3, br0, "10.1.1.4/24")
+
+dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
+AT_DATA([flows.txt], [dnl
+priority=1,action=drop
+priority=10,arp,action=normal
+priority=10,icmp,action=normal
+in_port=1,tcp,action=ct(commit),set_field:000000000000000001->conn_label,2
+in_port=2,conn_state=-trk,tcp,action=ct(recirc)
+in_port=2,conn_state=+trk,conn_label=000000000000000001,tcp,action=1
+in_port=3,tcp,action=ct(commit),set_field:000000000000000002->conn_label,4
+in_port=4,conn_state=-trk,tcp,action=ct(recirc)
+in_port=4,conn_state=+trk,conn_label=000000000000000001,tcp,action=3
+])
+
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+dnl HTTP requests from p0->p1 should work fine.
+NETNS_DAEMONIZE([at_ns1], [[$PYTHON $srcdir/test-conntrack.py]], [test-conntrack0.pid])
+AT_CHECK([ip netns exec at_ns0 wget 10.1.1.2 -t 3 -T 1 --retry-connrefused -v -o wget0.log])
+
+dnl HTTP requests from p2->p3 should fail due to network failure.
+dnl Try 5 times, in 1 second intervals.
+NETNS_DAEMONIZE([at_ns3], [[$PYTHON $srcdir/test-conntrack.py]], [test-conntrack1.pid])
+AT_CHECK([ip netns exec at_ns2 wget 10.1.1.4 -t 3 -T 1 -v -o wget1.log], [4])
+
+OVS_KMOD_VSWITCHD_STOP
+AT_CLEANUP

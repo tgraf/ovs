@@ -168,6 +168,9 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
     if (pin.fmd.conn_mark != 0) {
         ds_put_format(string, " conn_mark=0x%"PRIx32, pin.fmd.conn_mark);
     }
+    if (ovs_u128_nonzero(pin.fmd.conn_label)) {
+        ds_put_format(string, " conn_label="U128_FMT, U128_ARGS(&pin.fmd.conn_label));
+    }
 
     ds_put_format(string, " (via %s)",
                   ofputil_packet_in_reason_to_string(pin.reason, reasonbuf,

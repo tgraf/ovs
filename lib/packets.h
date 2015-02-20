@@ -68,6 +68,7 @@ struct pkt_metadata {
     uint8_t conn_state;         /* Connection state. */
     uint16_t conn_zone;         /* Connection zone. */
     uint32_t conn_mark;         /* Connection mark. */
+    ovs_u128 conn_label;        /* Connection label. */
 };
 
 #define PKT_METADATA_INITIALIZER(PORT) \

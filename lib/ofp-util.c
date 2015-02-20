@@ -195,7 +195,7 @@ ofputil_netmask_to_wcbits(ovs_be32 netmask)
 void
 ofputil_wildcard_from_ofpfw10(uint32_t ofpfw, struct flow_wildcards *wc)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 31);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 32);
 
     /* Initialize most of wc. */
     flow_wildcards_init_catchall(wc);
@@ -3314,6 +3314,7 @@ ofputil_decode_packet_in_finish(struct ofputil_packet_in *pin,
     pin->fmd.conn_state = match->flow.conn_state;
     pin->fmd.conn_zone = match->flow.conn_zone;
     pin->fmd.conn_mark = match->flow.conn_mark;
+    pin->fmd.conn_label = match->flow.conn_label;
 }
 
 enum ofperr
@@ -3465,6 +3466,10 @@ ofputil_packet_in_to_match(const struct ofputil_packet_in *pin,
 
     if (pin->fmd.conn_mark != 0) {
         match_set_conn_mark(match, pin->fmd.conn_mark);
+    }
+
+    if (ovs_u128_nonzero(pin->fmd.conn_label)) {
+        match_set_conn_label(match, pin->fmd.conn_label);
     }
 
     match_set_in_port(match, pin->fmd.in_port);
