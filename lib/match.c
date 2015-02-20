@@ -313,6 +313,26 @@ match_set_conn_mark_masked(struct match *match, uint32_t conn_mark,
 }
 
 void
+match_set_conn_label(struct match *match, ovs_u128 conn_label)
+{
+    ovs_u128 mask;
+
+    mask.u64.lo = UINT64_MAX;
+    mask.u64.hi = UINT64_MAX;
+    match_set_conn_label_masked(match, conn_label, mask);
+}
+
+void
+match_set_conn_label_masked(struct match *match, ovs_u128 value,
+                            ovs_u128 mask)
+{
+    match->flow.conn_label.u64.lo = value.u64.lo & mask.u64.lo;
+    match->flow.conn_label.u64.hi = value.u64.hi & mask.u64.hi;
+    match->wc.masks.conn_label.u64.lo = mask.u64.lo;
+    match->wc.masks.conn_label.u64.hi = mask.u64.hi;
+}
+
+void
 match_set_dl_type(struct match *match, ovs_be16 dl_type)
 {
     match->wc.masks.dl_type = OVS_BE16_MAX;
@@ -949,6 +969,19 @@ format_flow_tunnel(struct ds *s, const struct match *match)
     }
 }
 
+static void
+format_conn_label_masked(struct ds *s, const ovs_u128 *key,
+                         const ovs_u128 *mask)
+{
+    if (ovs_u128_nonzero(*mask)) {
+        ds_put_format(s, "conn_label="U128_FMT, U128_ARGS(key));
+        if (!is_all_ones(mask, sizeof(*mask))) {
+            ds_put_format(s, "/"U128_FMT, U128_ARGS(mask));
+        }
+        ds_put_char(s, ',');
+    }
+}
+
 /* Appends a string representation of 'match' to 's'.  If 'priority' is
  * different from OFP_DEFAULT_PRIORITY, includes it in 's'. */
 void
@@ -962,7 +995,7 @@ match_format(const struct match *match, struct ds *s, int priority)
 
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 31);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 32);
 
     if (priority != OFP_DEFAULT_PRIORITY) {
         ds_put_format(s, "priority=%d,", priority);
@@ -1016,6 +1049,10 @@ match_format(const struct match *match, struct ds *s, int priority)
 
     if (wc->masks.conn_mark) {
         format_uint32_masked(s, "conn_mark", f->conn_mark, wc->masks.conn_mark);
+    }
+
+    if (ovs_u128_nonzero(wc->masks.conn_label)) {
+        format_conn_label_masked(s, &f->conn_label, &wc->masks.conn_label);
     }
 
     if (wc->masks.dl_type) {

@@ -1200,9 +1200,9 @@ check_masked_set_action(struct dpif_backer *backer)
     return !error;
 }
 
-#define CHECK_FEATURE(FIELD)                                                \
+#define CHECK_FEATURE__(NAME, FIELD)                                        \
 static bool                                                                 \
-check_##FIELD(struct dpif_backer *backer)                                   \
+check_##NAME(struct dpif_backer *backer)                                    \
 {                                                                           \
     struct flow flow;                                                       \
     struct odputil_keybuf keybuf;                                           \
@@ -1214,23 +1214,26 @@ check_##FIELD(struct dpif_backer *backer)                                   \
                                                                             \
     ofpbuf_use_stack(&key, &keybuf, sizeof keybuf);                         \
     odp_flow_key_from_flow(&key, &flow, NULL, 0, true);                     \
-    enable = dpif_probe_feature(backer->dpif, #FIELD, &key, NULL);          \
+    enable = dpif_probe_feature(backer->dpif, #NAME, &key, NULL);           \
                                                                             \
     if (enable) {                                                           \
-        VLOG_INFO("%s: Datapath supports "#FIELD, dpif_name(backer->dpif)); \
+        VLOG_INFO("%s: Datapath supports "#NAME, dpif_name(backer->dpif));  \
     } else {                                                                \
-        VLOG_INFO("%s: Datapath does not support "#FIELD,                   \
+        VLOG_INFO("%s: Datapath does not support "#NAME,                    \
                   dpif_name(backer->dpif));                                 \
     }                                                                       \
                                                                             \
     return enable;                                                          \
 }
+#define CHECK_FEATURE(FIELD) CHECK_FEATURE__(FIELD, FIELD)
 
 CHECK_FEATURE(conn_state)
 CHECK_FEATURE(conn_zone)
 CHECK_FEATURE(conn_mark)
+CHECK_FEATURE__(conn_label, conn_label.u64.lo)
 
 #undef CHECK_FEATURE
+#undef CHECK_FEATURE__
 
 static void
 check_support(struct dpif_backer *backer)
@@ -1246,6 +1249,7 @@ check_support(struct dpif_backer *backer)
     backer->support.conn_state = check_conn_state(backer);
     backer->support.conn_zone = check_conn_zone(backer);
     backer->support.conn_mark = check_conn_mark(backer);
+    backer->support.conn_label = check_conn_label(backer);
 }
 
 static int
@@ -3937,7 +3941,9 @@ rule_check(struct rule *rule)
 
     if ((match.wc.masks.conn_state && !ofproto->backer->support.conn_state)
         || (match.wc.masks.conn_zone && !ofproto->backer->support.conn_zone)
-        || (match.wc.masks.conn_mark && !ofproto->backer->support.conn_mark)) {
+        || (match.wc.masks.conn_mark && !ofproto->backer->support.conn_mark)
+        || (ovs_u128_nonzero(match.wc.masks.conn_label)
+            && !ofproto->backer->support.conn_label)) {
         return OFPERR_OFPBMC_BAD_FIELD;
     }
     if (match.wc.masks.conn_state & CS_UNSUPPORTED_MASK) {

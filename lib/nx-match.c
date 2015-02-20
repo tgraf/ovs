@@ -743,6 +743,14 @@ nxm_put_frag(struct ofpbuf *b, const struct match *match,
                nw_frag_mask == FLOW_NW_FRAG_MASK ? UINT8_MAX : nw_frag_mask);
 }
 
+static void
+nxm_put_conn_label(struct ofpbuf *b,
+                   enum mf_field_id field, enum ofp_version version,
+                   const ovs_u128 value, const ovs_u128 mask)
+{
+    nxm_put(b, field, version, &value, &mask, sizeof(value));
+}
+
 /* Appends to 'b' a set of OXM or NXM matches for the IPv4 or IPv6 fields in
  * 'match'.  */
 static void
@@ -863,7 +871,7 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
     int match_len;
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 31);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 32);
 
     /* Metadata. */
     if (match->wc.masks.dp_hash) {
@@ -1007,6 +1015,10 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
     if (match->wc.masks.conn_mark) {
         nxm_put_32m(b, MFF_CONN_MARK, oxm, htonl(flow->conn_mark),
                     htonl(match->wc.masks.conn_mark));
+    }
+    if (ovs_u128_nonzero(match->wc.masks.conn_label)) {
+        nxm_put_conn_label(b, MFF_CONN_LABEL, oxm, flow->conn_label,
+                           match->wc.masks.conn_label);
     }
 
     /* OpenFlow 1.1+ Metadata. */
