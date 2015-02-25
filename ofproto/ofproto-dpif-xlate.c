@@ -98,21 +98,8 @@ struct xbridge {
     bool has_in_band;             /* Bridge has in band control? */
     bool forward_bpdu;            /* Bridge forwards STP BPDUs? */
 
-    /* True if the datapath supports recirculation. */
-    bool enable_recirc;
-
-    /* True if the datapath supports variable-length
-     * OVS_USERSPACE_ATTR_USERDATA in OVS_ACTION_ATTR_USERSPACE actions.
-     * False if the datapath supports only 8-byte (or shorter) userdata. */
-    bool variable_length_userdata;
-
-    /* Number of MPLS label stack entries that the datapath supports
-     * in matches. */
-    size_t max_mpls_depth;
-
-    /* True if the datapath supports masked data in OVS_ACTION_ATTR_SET
-     * actions. */
-    bool masked_set_action;
+    /* Datapath feature support. */
+    struct dpif_backer_support support;
 };
 
 struct xbundle {
@@ -377,10 +364,7 @@ static void xlate_xbridge_set(struct xbridge *, struct dpif *,
                               const struct dpif_ipfix *,
                               const struct netflow *,
                               bool forward_bpdu, bool has_in_band,
-                              bool enable_recirc,
-                              bool variable_length_userdata,
-                              size_t max_mpls_depth,
-                              bool masked_set_action);
+                              const struct dpif_backer_support *);
 static void xlate_xbundle_set(struct xbundle *xbundle,
                               enum port_vlan_mode vlan_mode, int vlan,
                               unsigned long *trunks, bool use_priority_tags,
@@ -448,10 +432,7 @@ xlate_xbridge_set(struct xbridge *xbridge,
                   const struct dpif_ipfix *ipfix,
                   const struct netflow *netflow,
                   bool forward_bpdu, bool has_in_band,
-                  bool enable_recirc,
-                  bool variable_length_userdata,
-                  size_t max_mpls_depth,
-                  bool masked_set_action)
+                  const struct dpif_backer_support *support)
 {
     if (xbridge->ml != ml) {
         mac_learning_unref(xbridge->ml);
@@ -496,10 +477,7 @@ xlate_xbridge_set(struct xbridge *xbridge,
     xbridge->dpif = dpif;
     xbridge->forward_bpdu = forward_bpdu;
     xbridge->has_in_band = has_in_band;
-    xbridge->enable_recirc = enable_recirc;
-    xbridge->variable_length_userdata = variable_length_userdata;
-    xbridge->max_mpls_depth = max_mpls_depth;
-    xbridge->masked_set_action = masked_set_action;
+    xbridge->support = *support;
 }
 
 static void
@@ -578,10 +556,8 @@ xlate_xbridge_copy(struct xbridge *xbridge)
                       xbridge->dpif, xbridge->ml, xbridge->stp,
                       xbridge->rstp, xbridge->ms, xbridge->mbridge,
                       xbridge->sflow, xbridge->ipfix, xbridge->netflow,
-                      xbridge->forward_bpdu,
-                      xbridge->has_in_band, xbridge->enable_recirc,
-                      xbridge->variable_length_userdata,
-                      xbridge->max_mpls_depth, xbridge->masked_set_action);
+                      xbridge->forward_bpdu, xbridge->has_in_band,
+                      &xbridge->support);
     LIST_FOR_EACH (xbundle, list_node, &xbridge->xbundles) {
         xlate_xbundle_copy(new_xbridge, xbundle);
     }
@@ -732,9 +708,8 @@ xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,
                   const struct dpif_sflow *sflow,
                   const struct dpif_ipfix *ipfix,
                   const struct netflow *netflow,
-                  bool forward_bpdu, bool has_in_band, bool enable_recirc,
-                  bool variable_length_userdata, size_t max_mpls_depth,
-                  bool masked_set_action)
+                  bool forward_bpdu, bool has_in_band,
+                  const struct dpif_backer_support *support)
 {
     struct xbridge *xbridge;
 
@@ -752,9 +727,7 @@ xlate_ofproto_set(struct ofproto_dpif *ofproto, const char *name,
     xbridge->name = xstrdup(name);
 
     xlate_xbridge_set(xbridge, dpif, ml, stp, rstp, ms, mbridge, sflow, ipfix,
-                      netflow, forward_bpdu, has_in_band, enable_recirc,
-                      variable_length_userdata, max_mpls_depth,
-                      masked_set_action);
+                      netflow, forward_bpdu, has_in_band, support);
 }
 
 static void
@@ -1673,7 +1646,7 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
         struct xlate_recirc *xr = &ctx->recirc;
         struct ofport_dpif *ofport;
 
-        if (ctx->xbridge->enable_recirc) {
+        if (ctx->xbridge->support.recirc) {
             ctx->use_recirc = bond_may_recirc(
                 out_xbundle->bond, &xr->recirc_id, &xr->hash_basis);
 
@@ -2829,10 +2802,11 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     }
 
     if (out_port != ODPP_NONE) {
+        bool use_masked = ctx->xbridge->support.masked_set_action;
+
         ctx->xout->slow |= commit_odp_actions(flow, &ctx->base_flow,
                                               ctx->xout->odp_actions,
-                                              wc,
-                                              ctx->xbridge->masked_set_action);
+                                              wc, use_masked);
 
         if (ctx->use_recirc) {
             struct ovs_action_hash *act_hash;
@@ -3197,6 +3171,7 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
 {
     struct ofproto_packet_in *pin;
     struct dpif_packet *packet;
+    bool use_masked;
 
     ctx->xout->slow |= SLOW_CONTROLLER;
     if (!ctx->xin->packet) {
@@ -3205,10 +3180,10 @@ execute_controller_action(struct xlate_ctx *ctx, int len,
 
     packet = dpif_packet_clone_from_ofpbuf(ctx->xin->packet);
 
+    use_masked = ctx->xbridge->support.masked_set_action;
     ctx->xout->slow |= commit_odp_actions(&ctx->xin->flow, &ctx->base_flow,
                                           ctx->xout->odp_actions,
-                                          &ctx->xout->wc,
-                                          ctx->xbridge->masked_set_action);
+                                          &ctx->xout->wc, use_masked);
 
     odp_execute_actions(NULL, &packet, 1, false,
                         ofpbuf_data(ctx->xout->odp_actions),
@@ -3259,6 +3234,7 @@ compose_recirculate_action(struct xlate_ctx *ctx,
     struct match match;
     struct rule *rule;
     struct ofpbuf ofpacts;
+    bool use_masked;
 
     ctx->exit = true;
 
@@ -3302,10 +3278,10 @@ compose_recirculate_action(struct xlate_ctx *ctx,
         rule_set_recirc_id(rule, id);
     }
 
+    use_masked = ctx->xbridge->support.masked_set_action;
     ctx->xout->slow |= commit_odp_actions(&ctx->xin->flow, &ctx->base_flow,
                                           ctx->xout->odp_actions,
-                                          &ctx->xout->wc,
-                                          ctx->xbridge->masked_set_action);
+                                          &ctx->xout->wc, use_masked);
     nl_msg_put_u32(ctx->xout->odp_actions, OVS_ACTION_ATTR_RECIRC, id);
 }
 
@@ -3320,10 +3296,11 @@ compose_mpls_push_action(struct xlate_ctx *ctx, struct ofpact_push_mpls *mpls)
 
     n = flow_count_mpls_labels(flow, wc);
     if (!n) {
+        bool use_masked = ctx->xbridge->support.masked_set_action;
+
         ctx->xout->slow |= commit_odp_actions(flow, &ctx->base_flow,
                                               ctx->xout->odp_actions,
-                                              &ctx->xout->wc,
-                                              ctx->xbridge->masked_set_action);
+                                              &ctx->xout->wc, use_masked);
     } else if (n >= FLOW_MAX_MPLS_LABELS) {
         if (ctx->xin->packet != NULL) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
@@ -3347,7 +3324,7 @@ compose_mpls_pop_action(struct xlate_ctx *ctx, ovs_be16 eth_type)
     int n = flow_count_mpls_labels(flow, wc);
 
     if (flow_pop_mpls(flow, n, eth_type, wc)) {
-        if (ctx->xbridge->enable_recirc) {
+        if (ctx->xbridge->support.recirc) {
             ctx->was_mpls = true;
         }
     } else if (n >= FLOW_MAX_MPLS_LABELS) {
@@ -3671,8 +3648,9 @@ xlate_sample_action(struct xlate_ctx *ctx,
   /* Scale the probability from 16-bit to 32-bit while representing
    * the same percentage. */
   uint32_t probability = (os->probability << 16) | os->probability;
+  bool use_masked;
 
-  if (!ctx->xbridge->variable_length_userdata) {
+  if (!ctx->xbridge->support.variable_length_userdata) {
       static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
 
       VLOG_ERR_RL(&rl, "ignoring NXAST_SAMPLE action because datapath "
@@ -3681,10 +3659,10 @@ xlate_sample_action(struct xlate_ctx *ctx,
       return;
   }
 
+  use_masked = ctx->xbridge->support.masked_set_action;
   ctx->xout->slow |= commit_odp_actions(&ctx->xin->flow, &ctx->base_flow,
                                         ctx->xout->odp_actions,
-                                        &ctx->xout->wc,
-                                        ctx->xbridge->masked_set_action);
+                                        &ctx->xout->wc, use_masked);
 
   compose_flow_sample_cookie(os->probability, os->collector_set_id,
                              os->obs_domain_id, os->obs_point_id, &cookie);
