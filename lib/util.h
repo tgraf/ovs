@@ -550,6 +550,23 @@ uint64_t bitwise_get(const void *src, unsigned int src_len,
 
 void xsleep(unsigned int seconds);
 
+#define U128_FMT                 "%016"PRIx64"%016"PRIx64
+#define U128_ARGS(cl)            (cl)->u64.hi, (cl)->u64.lo
+#define U128_SCAN_FMT            "%016"SCNx64"%016"SCNx64
+#define U128_SCAN_ARGS(cl)       &(cl)->u64.hi, &(cl)->u64.lo
+
+/* Returns non-zero if the parameters have equal value. */
+static inline int
+ovs_u128_equal(const ovs_u128 *a, const ovs_u128 *b)
+{
+    return (a->u64.hi == b->u64.hi) && (a->u64.lo == b->u64.lo);
+}
+
+static inline int ovs_u128_nonzero(ovs_u128 a)
+{
+    return !is_all_zeros(&a, sizeof(a));
+}
+
 #ifdef _WIN32
 
 char *ovs_format_message(int error);

@@ -159,8 +159,8 @@ check_256byte_hash(void (*hash)(const void *, size_t, uint32_t, ovs_u128 *),
         hash(in1, sizeof(ovs_u128) * 16, 0, &out1);
         if (!ovs_u128_equal(&out0, &out1)) {
             printf("%s hash not the same for non-64 aligned data "
-                   "%016"PRIx64"%016"PRIx64" != %016"PRIx64"%016"PRIx64"\n",
-                   name, out0.u64.lo, out0.u64.hi, out1.u64.lo, out1.u64.hi);
+                   U128_FMT" != "U128_FMT"\n", name, U128_ARGS(&out0),
+                   U128_ARGS(&out1));
         }
 
         for (j = i + 1; j <= n_bits; j++) {
@@ -171,10 +171,8 @@ check_256byte_hash(void (*hash)(const void *, size_t, uint32_t, ovs_u128 *),
             hash(in2, sizeof(ovs_u128) * 16, 0, &out2);
             if ((out1.u64.lo & unique_mask) == (out2.u64.lo & unique_mask)) {
                 printf("%s has a partial collision:\n", name);
-                printf("hash(1 << %4d) == %016"PRIx64"%016"PRIx64"\n", i,
-                       out1.u64.hi, out1.u64.lo);
-                printf("hash(1 << %4d) == %016"PRIx64"%016"PRIx64"\n", j,
-                       out2.u64.hi, out2.u64.lo);
+                printf("hash(1 << %4d) == "U128_FMT"\n", i, U128_ARGS(&out1));
+                printf("hash(1 << %4d) == "U128_FMT"\n", j, U128_ARGS(&out2));
                 printf("The low-order %d bits of output are both "
                        "0x%"PRIx64"\n", min_unique, out1.u64.lo & unique_mask);
             }
