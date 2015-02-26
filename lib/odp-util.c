@@ -57,6 +57,8 @@ static void format_odp_key_attr(const struct nlattr *a,
                                 const struct nlattr *ma,
                                 const struct hmap *portno_names, struct ds *ds,
                                 bool verbose);
+static void odp_format_u128(struct ds *ds, const ovs_u128 *value,
+                            const ovs_u128 *mask, bool verbose);
 
 /* Returns one the following for the action with the given OVS_ACTION_ATTR_*
  * 'type':
@@ -2031,28 +2033,46 @@ generate_all_wildcard_mask(struct ofpbuf *ofp, const struct nlattr *key)
     return ofp->base;
 }
 
+static int
+scan_u128(const char *s, ovs_u128 *key, ovs_u128 *mask)
+{
+    int n;
+
+    if (ovs_scan(s, U128_SCAN_FMT"%n", U128_SCAN_ARGS(key), &n)) {
+        int len = n;
+
+        if (mask) {
+            if (ovs_scan(s, "/"U128_SCAN_FMT"%n", U128_SCAN_ARGS(mask), &n)) {
+                len += n;
+            } else {
+                mask->u64.hi = mask->u64.lo = UINT64_MAX;
+            }
+        }
+
+        return len;
+    }
+
+    return 0;
+}
+
 int
 odp_ufid_from_string(const char *s_, ovs_u128 *ufid)
 {
     const char *s = s_;
 
     if (ovs_scan(s, "ufid:")) {
-        size_t n;
+        int n;
 
         s += 5;
         if (ovs_scan(s, "0x")) {
             s += 2;
         }
 
-        n = strspn(s, "0123456789abcdefABCDEF");
-        if (n != 32) {
+        n = scan_u128(s, ufid, NULL);
+        if (!n) {
             return -EINVAL;
         }
 
-        if (!ovs_scan(s, "%16"SCNx64"%16"SCNx64, &ufid->u64.hi,
-                      &ufid->u64.lo)) {
-            return -EINVAL;
-        }
         s += n;
         s += strspn(s, delimiters);
 
@@ -2062,11 +2082,23 @@ odp_ufid_from_string(const char *s_, ovs_u128 *ufid)
     return 0;
 }
 
+static void
+odp_format_u128(struct ds *ds, const ovs_u128 *value, const ovs_u128 *mask,
+                bool verbose)
+{
+    if (verbose || (mask && ovs_u128_nonzero(*mask))) {
+        ds_put_format(ds, U128_FMT, U128_ARGS(value));
+        if (mask && !is_all_ones(mask, sizeof(*mask))) {
+            ds_put_format(ds, "/"U128_FMT, U128_ARGS(mask));
+        }
+    }
+}
+
 void
 odp_format_ufid(const ovs_u128 *ufid, struct ds *ds)
 {
-    ds_put_format(ds, "ufid:%016"PRIx64"%016"PRIx64, ufid->u64.hi,
-                  ufid->u64.lo);
+    ds_put_format(ds, "ufid:");
+    odp_format_u128(ds, ufid, NULL, true);
 }
 
 /* Appends to 'ds' a string representation of the 'key_len' bytes of
