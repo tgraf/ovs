@@ -17,6 +17,40 @@ AT_CHECK([ip netns exec at_ns0 bash -c "ping -q -c 3 -i 0.3 -w 2 10.1.1.2 > ping
 OVS_KMOD_VSWITCHD_STOP([], DEL_NAMESPACES(at_ns0, at_ns1))
 AT_CLEANUP
 
+AT_SETUP([fragmentation - ipv4 icmp ])
+LOAD_MODULES([nf_conntrack_ipv4])
+OVS_KMOD_VSWITCHD_START(
+   [set-fail-mode br0 secure -- ])
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+
+dnl Sending ping through contrack
+AT_DATA([flows.txt], [dnl
+priority=1,action=drop
+priority=10,arp,action=normal
+in_port=1,icmp,action=ct(commit,zone=9),2
+in_port=2,conn_state=-trk,icmp,action=ct(recirc,zone=9)
+in_port=2,conn_state=+trk+est-new,icmp,action=1
+])
+
+AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+
+dnl Basic connectivity check.
+AT_CAPTURE_FILE([ping.output])
+AT_CHECK([ip netns exec at_ns0 bash -c "ping -q -c 3 -i 0.3 -w 2 10.1.1.2 >ping.output"])
+
+dnl Ipv4 fragmentation connectivity check.
+AT_CHECK([ip netns exec at_ns0 bash -c "ping -s 1600 -q -c 3 -i 0.3 -w 2 10.1.1.2 >>ping.output"])
+
+dnl Ipv4 larger fragmentation connectivity check.
+AT_CHECK([ip netns exec at_ns0 bash -c "ping -s 3200 -q -c 3 -i 0.3 -w 2 10.1.1.2 >>ping.output"])
+
+OVS_KMOD_VSWITCHD_STOP
+AT_CLEANUP
+
 AT_SETUP([conntrack - IPv4 HTTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
 LOAD_MODULES([nf_conntrack_ipv4])

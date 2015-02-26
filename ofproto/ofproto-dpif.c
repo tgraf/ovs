@@ -1128,6 +1128,7 @@ check_variable_length_userdata(struct dpif_backer *backer)
     execute.md = PKT_METADATA_INITIALIZER(0);
     execute.needs_help = false;
     execute.probe = true;
+    execute.mru = 0;
 
     error = dpif_execute(backer->dpif, &execute);
 
@@ -1224,6 +1225,7 @@ check_masked_set_action(struct dpif_backer *backer)
     execute.md = PKT_METADATA_INITIALIZER(0);
     execute.needs_help = false;
     execute.probe = true;
+    execute.mru = 0;
 
     error = dpif_execute(backer->dpif, &execute);
 
@@ -3645,6 +3647,7 @@ ofproto_dpif_execute_actions(struct ofproto_dpif *ofproto,
     execute.md = pkt_metadata_from_flow(flow);
     execute.needs_help = (xout.slow & SLOW_ACTION) != 0;
     execute.probe = false;
+    execute.mru = 0;
 
     /* Fix up in_port. */
     in_port = flow->in_port.ofp_port;
