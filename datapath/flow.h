@@ -35,7 +35,6 @@
 #include <net/ip_tunnels.h>
 
 struct sk_buff;
-struct nf_conn;
 
 /* Used to memset ovs_key_ipv4_tunnel padding. */
 #define OVS_TUNNEL_KEY_SIZE					\
@@ -129,10 +128,11 @@ struct sw_flow_key {
 	struct {
 		u32	priority;	/* Packet QoS priority. */
 		u32	skb_mark;	/* SKB mark. */
-		u32	conn_mark;	/* Connection mark. */
 		u16	in_port;	/* Input switch port (or DP_MAX_PORTS). */
 		u16	conn_zone;	/* Conntrack zone. */
+		u32	conn_mark;	/* Conntrack mark. */
 		u8	conn_state;	/* Connection state. */
+		struct ovs_key_conn_label conn_label;	/* XXX: Move out? */
 	} __packed phy; /* Safe when right after 'tun_key'. */
 	u32 ovs_flow_hash;		/* Datapath computed hash value.  */
 	u32 recirc_id;			/* Recirculation ID.  */

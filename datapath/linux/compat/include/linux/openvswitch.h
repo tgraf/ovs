@@ -345,10 +345,9 @@ enum ovs_key_attr {
 	OVS_KEY_ATTR_CONN_STATE,/* u8 of OVS_CS_F_* */
 	OVS_KEY_ATTR_CONN_ZONE, /* u16 connection tracking zone. */
 	OVS_KEY_ATTR_CONN_MARK, /* u32 connection tracking mark */
-	OVS_KEY_ATTR_CONN_LABEL,/* 16-octet conntrack label */
+	OVS_KEY_ATTR_CONN_LABEL,/* 16-octet connection tracking label */
 
 #ifdef __KERNEL__
-	/* Only used within kernel data path. */
 	OVS_KEY_ATTR_TUNNEL_INFO,  /* struct ovs_tunnel_info */
 #endif
 	__OVS_KEY_ATTR_MAX
@@ -459,13 +458,19 @@ struct ovs_key_nd {
 	__u8	nd_tll[ETH_ALEN];
 };
 
+#define OVS_CT_LABEL_LEN	16
+struct ovs_key_conn_label {
+	__u8	conn_label[OVS_CT_LABEL_LEN];
+};
+
 /* OVS_KEY_ATTR_CONN_STATE flags */
-#define OVS_CS_F_NEW               0x01
-#define OVS_CS_F_ESTABLISHED       0x02
-#define OVS_CS_F_RELATED           0x04
-#define OVS_CS_F_INVALID           0x20
-#define OVS_CS_F_REPLY_DIR         0x40
-#define OVS_CS_F_TRACKED           0x80
+#define OVS_CS_F_NEW               0x01 /* Beginning of a new connection. */
+#define OVS_CS_F_ESTABLISHED       0x02 /* Part of an existing connection. */
+#define OVS_CS_F_RELATED           0x04 /* Related to an established
+					 * connection. */
+#define OVS_CS_F_INVALID           0x20 /* Could not track connection. */
+#define OVS_CS_F_REPLY_DIR         0x40 /* Flow is in the reply direction. */
+#define OVS_CS_F_TRACKED           0x80 /* Conntrack has occurred. */
 
 /**
  * enum ovs_flow_attr - attributes for %OVS_FLOW_* commands.
@@ -658,14 +663,19 @@ struct ovs_action_push_tnl {
 enum ovs_ct_attr {
 	OVS_CT_ATTR_UNSPEC,
 	OVS_CT_ATTR_FLAGS,      /* u8 of OVS_CT_F_*. */
-	OVS_CT_ATTR_ZONE,       /* u16 number. */
+	OVS_CT_ATTR_ZONE,       /* u16 zone id. */
 	__OVS_CT_ATTR_MAX
 };
 
 #define OVS_CT_ATTR_MAX (__OVS_CT_ATTR_MAX - 1)
 
-/* OVS_CT_ATTR_FLAGS flags */
-#define OVS_CT_F_COMMIT 1
+/*
+ * OVS_CT_ATTR_FLAGS flags - bitmask of %OVS_CT_F_*
+ * @OVS_CT_F_COMMIT: Commits the flow to the conntrack hashtable in the
+ * specified zone. Future packets for the current connection will be
+ * considered as 'established' or 'related'.
+ */
+#define OVS_CT_F_COMMIT		0x01
 
 /**
  * enum ovs_action_attr - Action types.
@@ -698,7 +708,8 @@ enum ovs_ct_attr {
  * indicate the new packet contents. This could potentially still be
  * %ETH_P_MPLS if the resulting MPLS label stack is not empty.  If there
  * is no MPLS label stack, as determined by ethertype, no action is taken.
- * @OVS_ACTION_ATTR_CT: Track the connection.
+ * @OVS_ACTION_ATTR_CT: Track the connection. Populate the conntrack-related
+ * entries in the flow key.
  *
  * Only a single header can be set with a single %OVS_ACTION_ATTR_SET.  Not all
  * fields within a header are modifiable, e.g. the IPv4 protocol and fragment

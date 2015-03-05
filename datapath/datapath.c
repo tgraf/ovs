@@ -580,8 +580,6 @@ static int ovs_packet_cmd_execute(struct sk_buff *skb, struct genl_info *info)
 	packet->priority = flow->key.phy.priority;
 	packet->mark = flow->key.phy.skb_mark;
 
-	ovs_reinit_skb(net, packet, flow, acts);
-
 	rcu_read_lock();
 	dp = get_dp_rcu(sock_net(skb->sk), ovs_header->dp_ifindex);
 	err = -ENODEV;
@@ -1017,7 +1015,7 @@ static int ovs_flow_cmd_new(struct sk_buff *skb, struct genl_info *info)
 		}
 		ovs_unlock();
 
-		ovs_nla_free_flow_actions(old_acts);
+		ovs_nla_free_flow_actions(old_acts, true);
 		ovs_flow_free(new_flow, false);
 	}
 
@@ -1157,7 +1155,7 @@ static int ovs_flow_cmd_set(struct sk_buff *skb, struct genl_info *info)
 	if (reply)
 		ovs_notify(&dp_flow_genl_family, &ovs_dp_flow_multicast_group, reply, info);
 	if (old_acts)
-		ovs_nla_free_flow_actions(old_acts);
+		ovs_nla_free_flow_actions(old_acts, true);
 
 	return 0;
 
@@ -2197,6 +2195,7 @@ static int __net_init ovs_init_net(struct net *net)
 
 	INIT_LIST_HEAD(&ovs_net->dps);
 	INIT_WORK(&ovs_net->dp_notify_work, ovs_dp_notify_wq);
+	ovs_ct_init(net, ovs_net);
 	return 0;
 }
 
@@ -2234,6 +2233,7 @@ static void __net_exit ovs_exit_net(struct net *dnet)
 	struct net *net;
 	LIST_HEAD(head);
 
+	ovs_ct_exit(dnet, ovs_net);
 	ovs_lock();
 	list_for_each_entry_safe(dp, dp_next, &ovs_net->dps, list_node)
 		__dp_destroy(dp);
