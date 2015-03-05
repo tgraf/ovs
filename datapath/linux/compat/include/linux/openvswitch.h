@@ -345,6 +345,7 @@ enum ovs_key_attr {
 	OVS_KEY_ATTR_CONN_STATE,/* u8 of OVS_CS_F_* */
 	OVS_KEY_ATTR_CONN_ZONE, /* u16 connection tracking zone. */
 	OVS_KEY_ATTR_CONN_MARK, /* u32 connection tracking mark */
+	OVS_KEY_ATTR_CONN_LABEL,/* 16-octet conntrack label */
 
 #ifdef __KERNEL__
 	/* Only used within kernel data path. */
