@@ -659,11 +659,13 @@ struct ovs_action_push_tnl {
  * enum ovs_ct_attr - Attributes for %OVS_ACTION_ATTR_CT action.
  * @OVS_CT_ATTR_FLAGS: u32 connection tracking flags.
  * @OVS_CT_ATTR_ZONE: u16 connection tracking zone.
+ * XXX @OVS_CT_ATTR_HELPER
  */
 enum ovs_ct_attr {
 	OVS_CT_ATTR_UNSPEC,
 	OVS_CT_ATTR_FLAGS,      /* u8 of OVS_CT_F_*. */
 	OVS_CT_ATTR_ZONE,       /* u16 zone id. */
+	OVS_CT_ATTR_HELPER,
 	__OVS_CT_ATTR_MAX
 };
 

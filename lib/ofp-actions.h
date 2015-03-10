@@ -485,6 +485,7 @@ struct ofpact_conntrack {
     struct ofpact ofpact;
     uint16_t flags;
     uint16_t zone;
+    uint16_t alg;
 };
 
 static inline size_t
