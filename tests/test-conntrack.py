@@ -19,6 +19,15 @@ from BaseHTTPServer import HTTPServer
 from SimpleHTTPServer import SimpleHTTPRequestHandler
 from SocketServer import TCPServer
 
+from pyftpdlib.authorizers import DummyAuthorizer
+from pyftpdlib.handlers import FTPHandler
+from pyftpdlib.servers import FTPServer
+
+
+class OVSFTPHandler(FTPHandler):
+    authorizer = DummyAuthorizer()
+    authorizer.add_anonymous("/tmp")
+
 
 class TCPServerV6(HTTPServer):
     address_family = socket.AF_INET6
@@ -26,6 +35,7 @@ class TCPServerV6(HTTPServer):
 
 def main():
     SERVERS = {
+        'ftp':   [FTPServer,   OVSFTPHandler,            21],
         'http':  [TCPServer,   SimpleHTTPRequestHandler, 80],
         'http6': [TCPServerV6, SimpleHTTPRequestHandler, 80],
     }
@@ -33,7 +43,7 @@ def main():
     parser = argparse.ArgumentParser(
             description='Run basic application servers.')
     parser.add_argument('proto', default='http', nargs='?',
-            help='protocol to serve (http, http6)')
+            help='protocol to serve (http, http6, ftp)')
     args = parser.parse_args()
 
     if args.proto not in SERVERS:
