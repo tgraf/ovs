@@ -28,6 +28,7 @@
 #include "ofpbuf.h"
 #include "ofproto/ofproto-provider.h"
 #include "ofproto/ofproto-dpif.h"
+#include "ofproto/ofproto-dpif-rid.h"
 #include "connectivity.h"
 #include "coverage.h"
 #include "dynamic-string.h"
@@ -39,6 +40,7 @@
 #include "odp-util.h"
 #include "ofpbuf.h"
 #include "packets.h"
+#include "dp-packet.h"
 #include "poll-loop.h"
 #include "seq.h"
 #include "match.h"
@@ -288,7 +290,7 @@ bond_unref(struct bond *bond)
     hmap_destroy(&bond->pr_rule_ops);
 
     if (bond->recirc_id) {
-        ofproto_dpif_free_recirc_id(bond->ofproto, bond->recirc_id);
+        recirc_free_id(bond->recirc_id);
     }
 
     free(bond);
@@ -445,10 +447,10 @@ bond_reconfigure(struct bond *bond, const struct bond_settings *s)
 
     if (bond->balance != BM_AB) {
         if (!bond->recirc_id) {
-            bond->recirc_id = ofproto_dpif_alloc_recirc_id(bond->ofproto);
+            bond->recirc_id = recirc_alloc_id(bond->ofproto);
         }
     } else if (bond->recirc_id) {
-        ofproto_dpif_free_recirc_id(bond->ofproto, bond->recirc_id);
+        recirc_free_id(bond->recirc_id);
         bond->recirc_id = 0;
     }
 
@@ -718,13 +720,13 @@ bond_should_send_learning_packets(struct bond *bond)
  * See bond_should_send_learning_packets() for description of usage. The
  * caller should send the composed packet on the port associated with
  * port_aux and takes ownership of the returned ofpbuf. */
-struct ofpbuf *
+struct dp_packet *
 bond_compose_learning_packet(struct bond *bond,
                              const uint8_t eth_src[ETH_ADDR_LEN],
                              uint16_t vlan, void **port_aux)
 {
     struct bond_slave *slave;
-    struct ofpbuf *packet;
+    struct dp_packet *packet;
     struct flow flow;
 
     ovs_rwlock_rdlock(&rwlock);
@@ -733,7 +735,7 @@ bond_compose_learning_packet(struct bond *bond,
     memcpy(flow.dl_src, eth_src, ETH_ADDR_LEN);
     slave = choose_output_slave(bond, &flow, NULL, vlan);
 
-    packet = ofpbuf_new(0);
+    packet = dp_packet_new(0);
     compose_rarp(packet, eth_src);
     if (vlan) {
         eth_push_vlan(packet, htons(ETH_TYPE_VLAN), htons(vlan));

@@ -283,16 +283,16 @@ static enum ofperr
 nx_pull_header__(struct ofpbuf *b, bool allow_cookie, uint64_t *header,
                  const struct mf_field **field)
 {
-    if (ofpbuf_size(b) < 4) {
+    if (b->size < 4) {
         goto bad_len;
     }
 
-    *header = ((uint64_t) ntohl(get_unaligned_be32(ofpbuf_data(b)))) << 32;
+    *header = ((uint64_t) ntohl(get_unaligned_be32(b->data))) << 32;
     if (is_experimenter_oxm(*header)) {
-        if (ofpbuf_size(b) < 8) {
+        if (b->size < 8) {
             goto bad_len;
         }
-        *header = ntohll(get_unaligned_be64(ofpbuf_data(b)));
+        *header = ntohll(get_unaligned_be64(b->data));
     }
     if (nxm_length(*header) <= nxm_experimenter_len(*header)) {
         VLOG_WARN_RL(&rl, "OXM header "NXM_HEADER_FMT" has invalid length %d "
@@ -316,7 +316,7 @@ nx_pull_header__(struct ofpbuf *b, bool allow_cookie, uint64_t *header,
 
 bad_len:
     VLOG_DBG_RL(&rl, "encountered partial (%"PRIu32"-byte) OXM entry",
-                ofpbuf_size(b));
+                b->size);
 error:
     *header = 0;
     *field = NULL;
@@ -343,7 +343,7 @@ nx_pull_entry__(struct ofpbuf *b, bool allow_cookie, uint64_t *header,
     if (!payload) {
         VLOG_DBG_RL(&rl, "OXM header "NXM_HEADER_FMT" calls for %u-byte "
                     "payload but only %"PRIu32" bytes follow OXM header",
-                    NXM_HEADER_ARGS(*header), payload_len, ofpbuf_size(b));
+                    NXM_HEADER_ARGS(*header), payload_len, b->size);
         return OFPERR_OFPBMC_BAD_LEN;
     }
 
@@ -453,8 +453,8 @@ nx_pull_raw(const uint8_t *p, unsigned int match_len, bool strict,
     }
 
     ofpbuf_use_const(&b, p, match_len);
-    while (ofpbuf_size(&b)) {
-        const uint8_t *pos = ofpbuf_data(&b);
+    while (b.size) {
+        const uint8_t *pos = b.data;
         const struct mf_field *field;
         union mf_value value;
         union mf_value mask;
@@ -505,7 +505,7 @@ nx_pull_match__(struct ofpbuf *b, unsigned int match_len, bool strict,
         if (!p) {
             VLOG_DBG_RL(&rl, "nx_match length %u, rounded up to a "
                         "multiple of 8, is longer than space in message (max "
-                        "length %"PRIu32")", match_len, ofpbuf_size(b));
+                        "length %"PRIu32")", match_len, b->size);
             return OFPERR_OFPBMC_BAD_LEN;
         }
     }
@@ -541,11 +541,11 @@ nx_pull_match_loose(struct ofpbuf *b, unsigned int match_len,
 static enum ofperr
 oxm_pull_match__(struct ofpbuf *b, bool strict, struct match *match)
 {
-    struct ofp11_match_header *omh = ofpbuf_data(b);
+    struct ofp11_match_header *omh = b->data;
     uint8_t *p;
     uint16_t match_len;
 
-    if (ofpbuf_size(b) < sizeof *omh) {
+    if (b->size < sizeof *omh) {
         return OFPERR_OFPBMC_BAD_LEN;
     }
 
@@ -562,7 +562,7 @@ oxm_pull_match__(struct ofpbuf *b, bool strict, struct match *match)
     if (!p) {
         VLOG_DBG_RL(&rl, "oxm length %u, rounded up to a "
                     "multiple of 8, is longer than space in message (max "
-                    "length %"PRIu32")", match_len, ofpbuf_size(b));
+                    "length %"PRIu32")", match_len, b->size);
         return OFPERR_OFPBMC_BAD_LEN;
     }
 
@@ -588,6 +588,52 @@ enum ofperr
 oxm_pull_match_loose(struct ofpbuf *b, struct match *match)
 {
     return oxm_pull_match__(b, false, match);
+}
+
+/* Verify an array of OXM TLVs treating value of each TLV as a mask,
+ * disallowing masks in each TLV and ignoring pre-requisites. */
+enum ofperr
+oxm_pull_field_array(const void *fields_data, size_t fields_len,
+                     struct field_array *fa)
+{
+    struct ofpbuf b;
+
+    ofpbuf_use_const(&b, fields_data, fields_len);
+    while (b.size) {
+        const uint8_t *pos = b.data;
+        const struct mf_field *field;
+        union mf_value value;
+        enum ofperr error;
+        uint64_t header;
+
+        error = nx_pull_entry__(&b, false, &header, &field, &value, NULL);
+        if (error) {
+            VLOG_DBG_RL(&rl, "error pulling field array field");
+            return error;
+        } else if (!field) {
+            VLOG_DBG_RL(&rl, "unknown field array field");
+            error = OFPERR_OFPBMC_BAD_FIELD;
+        } else if (bitmap_is_set(fa->used.bm, field->id)) {
+            VLOG_DBG_RL(&rl, "duplicate field array field '%s'", field->name);
+            error = OFPERR_OFPBMC_DUP_FIELD;
+        } else if (!mf_is_mask_valid(field, &value)) {
+            VLOG_DBG_RL(&rl, "bad mask in field array field '%s'", field->name);
+            return OFPERR_OFPBMC_BAD_MASK;
+        } else {
+            field_array_set(field->id, &value, fa);
+        }
+
+        if (error) {
+            const uint8_t *start = fields_data;
+
+            VLOG_DBG_RL(&rl, "error parsing OXM at offset %"PRIdPTR" "
+                        "within field array (%s)", pos - start,
+                        ofperr_to_string(error));
+            return error;
+        }
+    }
+
+    return 0;
 }
 
 /* nx_put_match() and helpers.
@@ -695,6 +741,14 @@ nxm_put_frag(struct ofpbuf *b, const struct match *match,
 
     nxm_put_8m(b, MFF_IP_FRAG, version, nw_frag,
                nw_frag_mask == FLOW_NW_FRAG_MASK ? UINT8_MAX : nw_frag_mask);
+}
+
+static void
+nxm_put_conn_label(struct ofpbuf *b,
+                   enum mf_field_id field, enum ofp_version version,
+                   const ovs_u128 value, const ovs_u128 mask)
+{
+    nxm_put(b, field, version, &value, &mask, sizeof(value));
 }
 
 /* Appends to 'b' a set of OXM or NXM matches for the IPv4 or IPv6 fields in
@@ -813,11 +867,11 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
            ovs_be64 cookie, ovs_be64 cookie_mask)
 {
     const struct flow *flow = &match->flow;
-    const size_t start_len = ofpbuf_size(b);
+    const size_t start_len = b->size;
     int match_len;
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 31);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 32);
 
     /* Metadata. */
     if (match->wc.masks.dp_hash) {
@@ -962,6 +1016,10 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
         nxm_put_32m(b, MFF_CONN_MARK, oxm, htonl(flow->conn_mark),
                     htonl(match->wc.masks.conn_mark));
     }
+    if (ovs_u128_nonzero(match->wc.masks.conn_label)) {
+        nxm_put_conn_label(b, MFF_CONN_LABEL, oxm, flow->conn_label,
+                           match->wc.masks.conn_label);
+    }
 
     /* OpenFlow 1.1+ Metadata. */
     nxm_put_64m(b, MFF_METADATA, oxm,
@@ -979,7 +1037,7 @@ nx_put_raw(struct ofpbuf *b, enum ofp_version oxm, const struct match *match,
         }
     }
 
-    match_len = ofpbuf_size(b) - start_len;
+    match_len = b->size - start_len;
     return match_len;
 }
 
@@ -1020,7 +1078,7 @@ oxm_put_match(struct ofpbuf *b, const struct match *match,
 {
     int match_len;
     struct ofp11_match_header *omh;
-    size_t start_len = ofpbuf_size(b);
+    size_t start_len = b->size;
     ovs_be64 cookie = htonll(0), cookie_mask = htonll(0);
 
     ofpbuf_put_uninit(b, sizeof *omh);
@@ -1033,6 +1091,84 @@ oxm_put_match(struct ofpbuf *b, const struct match *match,
     omh->length = htons(match_len);
 
     return match_len;
+}
+
+/* Appends to 'b' the nx_match format that expresses the tlv corresponding
+ * to 'id'. If mask is not all-ones then it is also formated as the value
+ * of the tlv. */
+static void
+nx_format_mask_tlv(struct ds *ds, enum mf_field_id id,
+                   const union mf_value *mask)
+{
+    const struct mf_field *mf = mf_from_id(id);
+
+    ds_put_format(ds, "%s", mf->name);
+
+    if (!is_all_ones(mask, mf->n_bytes)) {
+        ds_put_char(ds, '=');
+        mf_format(mf, mask, NULL, ds);
+    }
+
+    ds_put_char(ds, ',');
+}
+
+/* Appends a string representation of 'fa_' to 'ds'.
+ * The TLVS value of 'fa_' is treated as a mask and
+ * only the name of fields is formated if it is all ones. */
+void
+oxm_format_field_array(struct ds *ds, const struct field_array *fa)
+{
+    size_t start_len = ds->length;
+    int i;
+
+    for (i = 0; i < MFF_N_IDS; i++) {
+        if (bitmap_is_set(fa->used.bm, i)) {
+            nx_format_mask_tlv(ds, i, &fa->value[i]);
+        }
+    }
+
+    if (ds->length > start_len) {
+        ds_chomp(ds, ',');
+    }
+}
+
+/* Appends to 'b' a series of OXM TLVs corresponding to the series
+ * of enum mf_field_id and value tuples in 'fa_'.
+ *
+ * OXM differs slightly among versions of OpenFlow.  Specify the OpenFlow
+ * version in use as 'version'.
+ *
+ * This function can cause 'b''s data to be reallocated.
+ *
+ * Returns the number of bytes appended to 'b'.  May return zero. */
+int
+oxm_put_field_array(struct ofpbuf *b, const struct field_array *fa,
+                    enum ofp_version version)
+{
+    size_t start_len = b->size;
+    int i;
+
+    /* Field arrays are only used with the group selection method
+     * property and group properties are only available in OpenFlow * 1.5+.
+     * So the following assertion should never fail.
+     *
+     * If support for older OpenFlow versions is desired then some care
+     * will need to be taken of different TLVs that handle the same
+     * flow fields. In particular:
+     * - VLAN_TCI, VLAN_VID and MFF_VLAN_PCP
+     * - IP_DSCP_MASK and DSCP_SHIFTED
+     * - REGS and XREGS
+     */
+    ovs_assert(version >= OFP15_VERSION);
+
+    for (i = 0; i < MFF_N_IDS; i++) {
+        if (bitmap_is_set(fa->used.bm, i)) {
+            nxm_put_unmasked(b, i, version, &fa->value[i],
+                             mf_from_id(i)->n_bytes);
+        }
+    }
+
+    return b->size - start_len;
 }
 
 static void
@@ -1082,7 +1218,7 @@ nx_match_to_string(const uint8_t *p, unsigned int match_len)
 
     ofpbuf_use_const(&b, p, match_len);
     ds_init(&s);
-    while (ofpbuf_size(&b)) {
+    while (b.size) {
         union mf_value value;
         union mf_value mask;
         enum ofperr error;
@@ -1114,12 +1250,12 @@ nx_match_to_string(const uint8_t *p, unsigned int match_len)
         ds_put_char(&s, ')');
     }
 
-    if (ofpbuf_size(&b)) {
+    if (b.size) {
         if (s.length) {
             ds_put_cstr(&s, ", ");
         }
 
-        ds_put_format(&s, "<%u invalid bytes>", ofpbuf_size(&b));
+        ds_put_format(&s, "<%u invalid bytes>", b.size);
     }
 
     return ds_steal_cstr(&s);
@@ -1128,7 +1264,7 @@ nx_match_to_string(const uint8_t *p, unsigned int match_len)
 char *
 oxm_match_to_string(const struct ofpbuf *p, unsigned int match_len)
 {
-    const struct ofp11_match_header *omh = ofpbuf_data(p);
+    const struct ofp11_match_header *omh = p->data;
     uint16_t match_len_;
     struct ds s;
 
@@ -1244,10 +1380,10 @@ static int
 nx_match_from_string_raw(const char *s, struct ofpbuf *b)
 {
     const char *full_s = s;
-    const size_t start_len = ofpbuf_size(b);
+    const size_t start_len = b->size;
 
     if (!strcmp(s, "<any>")) {
-        /* Ensure that 'ofpbuf_data(b)' isn't actually null. */
+        /* Ensure that 'b->data' isn't actually null. */
         ofpbuf_prealloc_tailroom(b, 1);
         return 0;
     }
@@ -1296,7 +1432,7 @@ nx_match_from_string_raw(const char *s, struct ofpbuf *b)
         s++;
     }
 
-    return ofpbuf_size(b) - start_len;
+    return b->size - start_len;
 }
 
 int
@@ -1312,7 +1448,7 @@ oxm_match_from_string(const char *s, struct ofpbuf *b)
 {
     int match_len;
     struct ofp11_match_header *omh;
-    size_t start_len = ofpbuf_size(b);
+    size_t start_len = b->size;
 
     ofpbuf_put_uninit(b, sizeof *omh);
     match_len = nx_match_from_string_raw(s, b) + sizeof *omh;
@@ -1489,9 +1625,9 @@ nx_stack_pop(struct ofpbuf *stack)
 {
     union mf_subvalue *v = NULL;
 
-    if (ofpbuf_size(stack)) {
+    if (stack->size) {
 
-        ofpbuf_set_size(stack, ofpbuf_size(stack) - sizeof *v);
+        stack->size -= sizeof *v;
         v = (union mf_subvalue *) ofpbuf_tail(stack);
     }
 
@@ -1532,7 +1668,7 @@ nxm_execute_stack_pop(const struct ofpact_stack *pop,
     } else {
         if (!VLOG_DROP_WARN(&rl)) {
             char *flow_str = flow_to_string(flow);
-            VLOG_WARN_RL(&rl, "Failed to pop from an empty stack. On flow \n"
+            VLOG_WARN_RL(&rl, "Failed to pop from an empty stack. On flow\n"
                            " %s", flow_str);
             free(flow_str);
         }

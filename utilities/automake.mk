@@ -22,15 +22,22 @@ scripts_SCRIPTS += \
 	utilities/ovs-save
 scripts_DATA += utilities/ovs-lib
 
-check_SCRIPTS += utilities/ovs-command-compgen.bash
+completion_SCRIPTS += \
+	utilities/ovs-appctl-bashcomp.bash \
+	utilities/ovs-vsctl-bashcomp.bash
+
+check_SCRIPTS += \
+	utilities/ovs-appctl-bashcomp.bash \
+	utilities/ovs-vsctl-bashcomp.bash
 
 utilities/ovs-lib: $(top_builddir)/config.status
 
-docs += utilities/ovs-command-compgen.INSTALL.md
+docs += utilities/ovs-command-bashcomp.INSTALL.md
 EXTRA_DIST += \
 	utilities/ovs-check-dead-ifs.in \
-	utilities/ovs-command-compgen.bash \
-	utilities/ovs-command-compgen.INSTALL.md \
+	utilities/ovs-appctl-bashcomp.bash \
+	utilities/ovs-vsctl-bashcomp.bash \
+	utilities/ovs-command-bashcomp.INSTALL.md \
 	utilities/ovs-ctl.in \
 	utilities/ovs-dev.py \
 	utilities/ovs-docker \
@@ -43,7 +50,8 @@ EXTRA_DIST += \
 	utilities/ovs-save \
 	utilities/ovs-tcpundump.in \
 	utilities/ovs-test.in \
-	utilities/ovs-vlan-test.in
+	utilities/ovs-vlan-test.in \
+	utilities/qemu-wrap.py
 MAN_ROOTS += \
 	utilities/ovs-appctl.8.in \
 	utilities/ovs-benchmark.1.in \

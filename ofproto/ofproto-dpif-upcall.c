@@ -152,6 +152,8 @@ enum upcall_type {
 
 struct upcall {
     struct ofproto_dpif *ofproto;  /* Parent ofproto. */
+    const struct recirc_id_node *recirc; /* Recirculation context. */
+    bool have_recirc_ref;                /* Reference held on recirc ctx? */
 
     /* The flow and packet are only required to be constant when using
      * dpif-netdev.  If a modification is absolutely necessary, a const cast
@@ -159,7 +161,7 @@ struct upcall {
     const struct flow *flow;       /* Parsed representation of the packet. */
     const ovs_u128 *ufid;          /* Unique identifier for 'flow'. */
     int pmd_id;                    /* Datapath poll mode driver id. */
-    const struct ofpbuf *packet;   /* Packet associated with this upcall. */
+    const struct dp_packet *packet;   /* Packet associated with this upcall. */
     ofp_port_t in_port;            /* OpenFlow in port, or OFPP_NONE. */
     unsigned int  mru;             /* If !0, Maximum receive unit of
                                       fragmented IP packet */
@@ -231,6 +233,10 @@ struct udpif_key {
         struct odputil_keybuf buf;
         struct nlattr nla;
     } keybuf, maskbuf;
+
+    /* Recirculation IDs with references held by the ukey. */
+    unsigned n_recircs;
+    uint32_t recircs[];   /* 'n_recircs' id's for which references are held. */
 };
 
 /* Datapath operation with optional ukey attached. */
@@ -273,7 +279,7 @@ static void upcall_unixctl_dump_wait(struct unixctl_conn *conn, int argc,
 static void upcall_unixctl_purge(struct unixctl_conn *conn, int argc,
                                  const char *argv[], void *aux);
 
-static struct udpif_key *ukey_create_from_upcall(const struct upcall *);
+static struct udpif_key *ukey_create_from_upcall(struct upcall *);
 static int ukey_create_from_dpif_flow(const struct udpif *,
                                       const struct dpif_flow *,
                                       struct udpif_key **);
@@ -290,7 +296,7 @@ static enum upcall_type classify_upcall(enum dpif_upcall_type type,
                                         const struct nlattr *userdata);
 
 static int upcall_receive(struct upcall *, const struct dpif_backer *,
-                          const struct ofpbuf *packet, enum dpif_upcall_type,
+                          const struct dp_packet *packet, enum dpif_upcall_type,
                           const struct nlattr *userdata, const struct flow *,
                           const unsigned int mru,
                           const ovs_u128 *ufid, const int pmd_id);
@@ -650,7 +656,6 @@ recv_upcalls(struct handler *handler)
         struct dpif_upcall *dupcall = &dupcalls[n_upcalls];
         struct upcall *upcall = &upcalls[n_upcalls];
         struct flow *flow = &flows[n_upcalls];
-        struct pkt_metadata md;
         unsigned int mru;
         int error;
 
@@ -700,8 +705,8 @@ recv_upcalls(struct handler *handler)
             upcall->vsp_adjusted = true;
         }
 
-        md = pkt_metadata_from_flow(flow);
-        flow_extract(&dupcall->packet, &md, flow);
+        pkt_metadata_from_flow(&dupcall->packet.md, flow);
+        flow_extract(&dupcall->packet, flow);
 
         error = process_upcall(udpif, upcall, NULL);
         if (error) {
@@ -714,14 +719,14 @@ recv_upcalls(struct handler *handler)
 cleanup:
         upcall_uninit(upcall);
 free_dupcall:
-        ofpbuf_uninit(&dupcall->packet);
+        dp_packet_uninit(&dupcall->packet);
         ofpbuf_uninit(recv_buf);
     }
 
     if (n_upcalls) {
         handle_upcalls(handler->udpif, upcalls, n_upcalls);
         for (i = 0; i < n_upcalls; i++) {
-            ofpbuf_uninit(&dupcalls[i].packet);
+            dp_packet_uninit(&dupcalls[i].packet);
             ofpbuf_uninit(&recv_bufs[i]);
             upcall_uninit(&upcalls[i]);
         }
@@ -747,6 +752,8 @@ udpif_revalidator(void *arg)
     for (;;) {
         if (leader) {
             uint64_t reval_seq;
+
+            recirc_run(); /* Recirculation cleanup. */
 
             reval_seq = seq_read(udpif->reval_seq);
             last_reval_seq = reval_seq;
@@ -902,7 +909,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
  * since the 'upcall->put_actions' remains uninitialized. */
 static int
 upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
-               const struct ofpbuf *packet, enum dpif_upcall_type type,
+               const struct dp_packet *packet, enum dpif_upcall_type type,
                const struct nlattr *userdata, const struct flow *flow,
                const unsigned int mru, const ovs_u128 *ufid, const int pmd_id)
 {
@@ -914,6 +921,8 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
         return error;
     }
 
+    upcall->recirc = NULL;
+    upcall->have_recirc_ref = false;
     upcall->flow = flow;
     upcall->packet = packet;
     upcall->ufid = ufid;
@@ -944,7 +953,7 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
     struct xlate_in xin;
 
     stats.n_packets = 1;
-    stats.n_bytes = ofpbuf_size(upcall->packet);
+    stats.n_bytes = dp_packet_size(upcall->packet);
     stats.used = time_msec();
     stats.tcp_flags = ntohs(upcall->flow->tcp_flags);
 
@@ -954,9 +963,21 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
 
     if (upcall->type == DPIF_UC_MISS) {
         xin.resubmit_stats = &stats;
+
+        if (xin.recirc) {
+            /* We may install a datapath flow only if we get a reference to the
+             * recirculation context (otherwise we could have recirculation
+             * upcalls using recirculation ID for which no context can be
+             * found).  We may still execute the flow's actions even if we
+             * don't install the flow. */
+            upcall->recirc = xin.recirc;
+            upcall->have_recirc_ref = recirc_id_node_try_ref_rcu(xin.recirc);
+        }
     } else {
-        /* For non-miss upcalls, there's a flow in the datapath which this
-         * packet was accounted to.  Presumably the revalidators will deal
+        /* For non-miss upcalls, we are either executing actions (one of which
+         * is an userspace action) for an upcall, in which case the stats have
+         * already been taken care of, or there's a flow in the datapath which
+         * this packet was accounted to.  Presumably the revalidators will deal
          * with pushing its stats eventually. */
     }
 
@@ -975,12 +996,12 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
      *
      * Copy packets before they are modified by execution. */
     if (upcall->xout.fail_open) {
-        const struct ofpbuf *packet = upcall->packet;
+        const struct dp_packet *packet = upcall->packet;
         struct ofproto_packet_in *pin;
 
         pin = xmalloc(sizeof *pin);
-        pin->up.packet = xmemdup(ofpbuf_data(packet), ofpbuf_size(packet));
-        pin->up.packet_len = ofpbuf_size(packet);
+        pin->up.packet = xmemdup(dp_packet_data(packet), dp_packet_size(packet));
+        pin->up.packet_len = dp_packet_size(packet);
         pin->up.reason = OFPR_NO_MATCH;
         pin->up.table_id = 0;
         pin->up.cookie = OVS_BE64_MAX;
@@ -992,8 +1013,8 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
 
     if (!upcall->xout.slow) {
         ofpbuf_use_const(&upcall->put_actions,
-                         ofpbuf_data(upcall->xout.odp_actions),
-                         ofpbuf_size(upcall->xout.odp_actions));
+                         upcall->xout.odp_actions->data,
+                         upcall->xout.odp_actions->size);
     } else {
         ofpbuf_init(&upcall->put_actions, 0);
         compose_slow_path(udpif, &upcall->xout, upcall->flow,
@@ -1001,7 +1022,12 @@ upcall_xlate(struct udpif *udpif, struct upcall *upcall,
                           &upcall->put_actions);
     }
 
-    upcall->ukey = ukey_create_from_upcall(upcall);
+    /* This function is also called for slow-pathed flows.  As we are only
+     * going to create new datapath flows for actual datapath misses, there is
+     * no point in creating a ukey otherwise. */
+    if (upcall->type == DPIF_UC_MISS) {
+        upcall->ukey = ukey_create_from_upcall(upcall);
+    }
 }
 
 static void
@@ -1012,14 +1038,19 @@ upcall_uninit(struct upcall *upcall)
             xlate_out_uninit(&upcall->xout);
         }
         ofpbuf_uninit(&upcall->put_actions);
-        if (!upcall->ukey_persists) {
-            ukey_delete__(upcall->ukey);
+        if (upcall->ukey) {
+            if (!upcall->ukey_persists) {
+                ukey_delete__(upcall->ukey);
+            }
+        } else if (upcall->have_recirc_ref) {
+            /* The reference was transferred to the ukey if one was created. */
+            recirc_id_node_unref(upcall->recirc);
         }
     }
 }
 
 static int
-upcall_cb(const struct ofpbuf *packet, const struct flow *flow, ovs_u128 *ufid,
+upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufid,
           int pmd_id, enum dpif_upcall_type type,
           const struct nlattr *userdata, struct ofpbuf *actions,
           struct flow_wildcards *wc, struct ofpbuf *put_actions, void *aux)
@@ -1045,8 +1076,8 @@ upcall_cb(const struct ofpbuf *packet, const struct flow *flow, ovs_u128 *ufid,
     }
 
     if (upcall.xout.slow && put_actions) {
-        ofpbuf_put(put_actions, ofpbuf_data(&upcall.put_actions),
-                   ofpbuf_size(&upcall.put_actions));
+        ofpbuf_put(put_actions, upcall.put_actions.data,
+                   upcall.put_actions.size);
     }
 
     if (OVS_LIKELY(wc)) {
@@ -1063,10 +1094,16 @@ upcall_cb(const struct ofpbuf *packet, const struct flow *flow, ovs_u128 *ufid,
         goto out;
     }
 
+    /* Prevent miss flow installation if the key has recirculation ID but we
+     * were not able to get a reference on it. */
+    if (type == DPIF_UC_MISS && upcall.recirc && !upcall.have_recirc_ref) {
+        error = ENOSPC;
+        goto out;
+    }
+
     if (upcall.ukey && !ukey_install(udpif, upcall.ukey)) {
         error = ENOSPC;
     }
-
 out:
     if (!error) {
         upcall.ukey_persists = true;
@@ -1080,7 +1117,7 @@ process_upcall(struct udpif *udpif, struct upcall *upcall,
                struct ofpbuf *odp_actions)
 {
     const struct nlattr *userdata = upcall->userdata;
-    const struct ofpbuf *packet = upcall->packet;
+    const struct dp_packet *packet = upcall->packet;
     const struct flow *flow = upcall->flow;
 
     switch (classify_upcall(upcall->type, userdata)) {
@@ -1173,7 +1210,7 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
     n_ops = 0;
     for (i = 0; i < n_upcalls; i++) {
         struct upcall *upcall = &upcalls[i];
-        const struct ofpbuf *packet = upcall->packet;
+        const struct dp_packet *packet = upcall->packet;
         struct ukey_op *op;
 
         if (upcall->vsp_adjusted) {
@@ -1182,8 +1219,8 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
              * actions were composed assuming that the packet contained no
              * VLAN.  So, we must remove the VLAN header from the packet before
              * trying to execute the actions. */
-            if (ofpbuf_size(upcall->xout.odp_actions)) {
-                eth_pop_vlan(CONST_CAST(struct ofpbuf *, upcall->packet));
+            if (upcall->xout.odp_actions->size) {
+                eth_pop_vlan(CONST_CAST(struct dp_packet *, upcall->packet));
             }
 
             /* Remove the flow vlan tags inserted by vlan splinter logic
@@ -1196,8 +1233,12 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
          *    - The datapath already has too many flows.
          *
          *    - We received this packet via some flow installed in the kernel
-         *      already. */
-        if (may_put && upcall->type == DPIF_UC_MISS) {
+         *      already.
+         *
+         *    - Upcall was a recirculation but we do not have a reference to
+         *      to the recirculation ID. */
+        if (may_put && upcall->type == DPIF_UC_MISS &&
+            (!upcall->recirc || upcall->have_recirc_ref)) {
             struct udpif_key *ukey = upcall->ukey;
 
             upcall->ukey_persists = true;
@@ -1212,19 +1253,19 @@ handle_upcalls(struct udpif *udpif, struct upcall *upcalls,
             op->dop.u.flow_put.mask_len = ukey->mask_len;
             op->dop.u.flow_put.ufid = upcall->ufid;
             op->dop.u.flow_put.stats = NULL;
-            op->dop.u.flow_put.actions = ofpbuf_data(ukey->actions);
-            op->dop.u.flow_put.actions_len = ofpbuf_size(ukey->actions);
+            op->dop.u.flow_put.actions = ukey->actions->data;
+            op->dop.u.flow_put.actions_len = ukey->actions->size;
         }
 
-        if (ofpbuf_size(upcall->xout.odp_actions)) {
+        if (upcall->xout.odp_actions->size) {
             op = &ops[n_ops++];
             op->ukey = NULL;
             op->dop.type = DPIF_OP_EXECUTE;
-            op->dop.u.execute.packet = CONST_CAST(struct ofpbuf *, packet);
+            op->dop.u.execute.packet = CONST_CAST(struct dp_packet *, packet);
             odp_key_to_pkt_metadata(upcall->key, upcall->key_len,
-                                    &op->dop.u.execute.md);
-            op->dop.u.execute.actions = ofpbuf_data(upcall->xout.odp_actions);
-            op->dop.u.execute.actions_len = ofpbuf_size(upcall->xout.odp_actions);
+                                    &op->dop.u.execute.packet->md);
+            op->dop.u.execute.actions = upcall->xout.odp_actions->data;
+            op->dop.u.execute.actions_len = upcall->xout.odp_actions->size;
             op->dop.u.execute.needs_help = (upcall->xout.slow & SLOW_ACTION) != 0;
             op->dop.u.execute.probe = false;
             op->dop.u.execute.mru = upcall->mru;
@@ -1285,10 +1326,13 @@ ukey_create__(const struct nlattr *key, size_t key_len,
               const struct nlattr *mask, size_t mask_len,
               bool ufid_present, const ovs_u128 *ufid,
               const int pmd_id, const struct ofpbuf *actions,
-              uint64_t dump_seq, uint64_t reval_seq, long long int used)
+              uint64_t dump_seq, uint64_t reval_seq, long long int used,
+              const struct recirc_id_node *key_recirc, struct xlate_out *xout)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
-    struct udpif_key *ukey = xmalloc(sizeof *ukey);
+    unsigned n_recircs = (key_recirc ? 1 : 0) + (xout ? xout->n_recircs : 0);
+    struct udpif_key *ukey = xmalloc(sizeof *ukey +
+                                     n_recircs * sizeof *ukey->recircs);
 
     memcpy(&ukey->keybuf, key, key_len);
     ukey->key = &ukey->keybuf.nla;
@@ -1311,11 +1355,22 @@ ukey_create__(const struct nlattr *key, size_t key_len,
     ukey->stats.used = used;
     ukey->xcache = NULL;
 
+    ukey->n_recircs = n_recircs;
+    if (key_recirc) {
+        ukey->recircs[0] = key_recirc->id;
+    }
+    if (xout && xout->n_recircs) {
+        const uint32_t *act_recircs = xlate_out_get_recircs(xout);
+
+        memcpy(ukey->recircs + (key_recirc ? 1 : 0), act_recircs,
+               xout->n_recircs * sizeof *ukey->recircs);
+        xlate_out_take_recircs(xout);
+    }
     return ukey;
 }
 
 static struct udpif_key *
-ukey_create_from_upcall(const struct upcall *upcall)
+ukey_create_from_upcall(struct upcall *upcall)
 {
     struct odputil_keybuf keystub, maskstub;
     struct ofpbuf keybuf, maskbuf;
@@ -1342,11 +1397,12 @@ ukey_create_from_upcall(const struct upcall *upcall)
                                UINT32_MAX, max_mpls, recirc);
     }
 
-    return ukey_create__(ofpbuf_data(&keybuf), ofpbuf_size(&keybuf),
-                         ofpbuf_data(&maskbuf), ofpbuf_size(&maskbuf),
+    return ukey_create__(keybuf.data, keybuf.size, maskbuf.data, maskbuf.size,
                          true, upcall->ufid, upcall->pmd_id,
                          &upcall->put_actions, upcall->dump_seq,
-                         upcall->reval_seq, 0);
+                         upcall->reval_seq, 0,
+                         upcall->have_recirc_ref ? upcall->recirc : NULL,
+                         &upcall->xout);
 }
 
 static int
@@ -1358,12 +1414,15 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
     struct ofpbuf actions;
     uint64_t dump_seq, reval_seq;
     uint64_t stub[DPIF_FLOW_BUFSIZE / 8];
+    const struct nlattr *a;
+    unsigned int left;
 
-    if (!flow->key_len) {
+    if (!flow->key_len || !flow->actions_len) {
         struct ofpbuf buf;
         int err;
 
-        /* If the key was not provided by the datapath, fetch the full flow. */
+        /* If the key or actions were not provided by the datapath, fetch the
+         * full flow. */
         ofpbuf_use_stack(&buf, &stub, sizeof stub);
         err = dpif_flow_get(udpif->dpif, NULL, 0, &flow->ufid,
                             flow->pmd_id, &buf, &full_flow);
@@ -1372,13 +1431,23 @@ ukey_create_from_dpif_flow(const struct udpif *udpif,
         }
         flow = &full_flow;
     }
+
+    /* Check the flow actions for recirculation action.  As recirculation
+     * relies on OVS userspace internal state, we need to delete all old
+     * datapath flows with recirculation upon OVS restart. */
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, flow->actions, flow->actions_len) {
+        if (nl_attr_type(a) == OVS_ACTION_ATTR_RECIRC) {
+            return EINVAL;
+        }
+    }
+
     dump_seq = seq_read(udpif->dump_seq);
     reval_seq = seq_read(udpif->reval_seq);
     ofpbuf_use_const(&actions, &flow->actions, flow->actions_len);
     *ukey = ukey_create__(flow->key, flow->key_len,
                           flow->mask, flow->mask_len, flow->ufid_present,
                           &flow->ufid, flow->pmd_id, &actions, dump_seq,
-                          reval_seq, flow->stats.used);
+                          reval_seq, flow->stats.used, NULL, NULL);
 
     return 0;
 }
@@ -1521,6 +1590,9 @@ ukey_delete__(struct udpif_key *ukey)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
     if (ukey) {
+        for (int i = 0; i < ukey->n_recircs; i++) {
+            recirc_free_id(ukey->recircs[i]);
+        }
         xlate_cache_delete(ukey->xcache);
         ofpbuf_delete(ukey->actions);
         ovs_mutex_destroy(&ukey->mutex);
@@ -1659,8 +1731,8 @@ revalidate_ukey(struct udpif *udpif, struct udpif_key *ukey,
     }
 
     if (!xout.slow) {
-        ofpbuf_use_const(&xout_actions, ofpbuf_data(xout.odp_actions),
-                         ofpbuf_size(xout.odp_actions));
+        ofpbuf_use_const(&xout_actions, xout.odp_actions->data,
+                         xout.odp_actions->size);
     } else {
         ofpbuf_use_stack(&xout_actions, slow_path_buf, sizeof slow_path_buf);
         compose_slow_path(udpif, &xout, &flow, flow.in_port.odp_port,
@@ -1785,8 +1857,8 @@ push_ukey_ops__(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
                 continue;
             }
 
-            error = xlate_lookup(udpif->backer, &flow, &ofproto,
-                                 NULL, NULL, &netflow, &ofp_in_port);
+            error = xlate_lookup(udpif->backer, &flow, &ofproto, NULL, NULL,
+                                 &netflow, &ofp_in_port);
             if (!error) {
                 struct xlate_in xin;
 

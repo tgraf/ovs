@@ -105,6 +105,7 @@
     OFPACT(NOTE,            ofpact_note,        data, "note")           \
     OFPACT(EXIT,            ofpact_null,        ofpact, "exit")         \
     OFPACT(SAMPLE,          ofpact_sample,      ofpact, "sample")       \
+    OFPACT(UNROLL_XLATE,    ofpact_unroll_xlate, ofpact, "unroll_xlate") \
     OFPACT(CT,              ofpact_conntrack,   ofpact, "ct")           \
                                                                         \
     /* Instructions. */                                                 \
@@ -484,6 +485,7 @@ struct ofpact_conntrack {
     struct ofpact ofpact;
     uint16_t flags;
     uint16_t zone;
+    uint16_t alg;
 };
 
 static inline size_t
@@ -735,6 +737,17 @@ struct ofpact_goto_table {
 struct ofpact_group {
     struct ofpact ofpact;
     uint32_t group_id;
+};
+
+/* OFPACT_UNROLL_XLATE.
+ *
+ * Used only internally. */
+struct ofpact_unroll_xlate {
+    struct ofpact ofpact;
+
+    /* Metadata in xlate context, visible to controller via PACKET_INs. */
+    uint8_t  rule_table_id;       /* 0xFF if none. */
+    ovs_be64 rule_cookie;         /* OVS_BE64_MAX if none. */
 };
 
 /* Converting OpenFlow to ofpacts. */

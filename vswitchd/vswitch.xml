@@ -423,6 +423,28 @@
 
     </group>
 
+    <group title="Capabilities">
+      <p>
+        These columns report capabilities of the Open vSwitch instance.
+      </p>
+      <column name="datapath_types">
+        <p>
+          This column reports the different dpifs registered with the system.
+          These are the values that this instance supports in the <ref
+          column="datapath_type" table="Bridge"/> column of the <ref
+          table="Bridge"/> table.
+        </p>
+      </column>
+      <column name="iface_types">
+        <p>
+          This column reports the different netdevs registered with the system.
+          These are the values that this instance supports in the <ref
+          column="type" table="Interface"/> column of the <ref
+          table="Interface"/> table.
+        </p>
+      </column>
+    </group>
+
     <group title="Database Configuration">
       <p>
         These columns primarily configure the Open vSwitch database
@@ -505,6 +527,10 @@
           <code>flood_vlans</code>.  Consider using another bonding mode or
           a different type of mirror instead.
         </p>
+      </column>
+
+      <column name="auto_attach">
+          Auto Attach configuration.
       </column>
     </group>
 
@@ -924,9 +950,12 @@
 
     <group title="Other Features">
       <column name="datapath_type">
-        Name of datapath provider.  The kernel datapath has
-        type <code>system</code>.  The userspace datapath has
-        type <code>netdev</code>.
+        Name of datapath provider.  The kernel datapath has type
+        <code>system</code>.  The userspace datapath has type
+        <code>netdev</code>.  A manager may refer to the <ref
+        table="Open_vSwitch" column="datapath_types"/> column of the <ref
+        table="Open_vSwitch"/> table for a list of the types accepted by this
+        Open vSwitch instance.
       </column>
 
       <column name="external_ids" key="bridge-id">
@@ -1743,7 +1772,10 @@
     <group title="System-Specific Details">
       <column name="type">
         <p>
-          The interface type, one of:
+          The interface type.  The types supported by a particular instance of
+          Open vSwitch are listed in the <ref table="Open_vSwitch"
+          column="iface_types"/> column in the <ref table="Open_vSwitch"/>
+          table.  The following types are defined:
         </p>
 
         <dl>
@@ -2025,24 +2057,28 @@
 
 	  </group>
 
-      <group title="Tunnel Options: gre and ipsec_gre only">
+      <group title="Tunnel Options: gre, ipsec_gre, geneve, and vxlan">
         <p>
-          Only <code>gre</code> and <code>ipsec_gre</code> interfaces support
-          these options.
+          <code>gre</code>, <code>ipsec_gre</code>, <code>geneve</code>, and
+          <code>vxlan</code> interfaces support these options.
         </p>
 
         <column name="options" key="csum" type='{"type": "boolean"}'>
           <p>
-            Optional.  Compute GRE checksums on outgoing packets.  Default is
-            disabled, set to <code>true</code> to enable.  Checksums present on
-            incoming packets will be validated regardless of this setting.
+            Optional.  Compute encapsulation header (either GRE or UDP) 
+            checksums on outgoing packets.  Default is disabled, set to
+            <code>true</code> to enable.  Checksums present on incoming
+            packets will be validated regardless of this setting.
 	  </p>
 
-	  <p>
-	    GRE checksums impose a significant performance penalty because they
-	    cover the entire packet.  The encapsulated L3, L4, and L7 packet
-	    contents typically have their own checksums, so this additional
-	    checksum only adds value for the GRE and encapsulated L2 headers.
+          <p>
+            When using the upstream Linux kernel module, computation of
+            checksums for <code>geneve</code> and <code>vxlan</code> requires
+            Linux kernel version 4.0 or higher. <code>gre</code> supports
+            checksums for all versions of Open vSwitch that support GRE.
+            The out of tree kernel module distributed as part of OVS
+            can compute all tunnel checksums on any kernel version that it
+            is compatible with.
           </p>
 
           <p>
@@ -2926,6 +2962,17 @@
       </column>
     </group>
 
+    <group title="Auto Attach Configuration">
+      <p>
+          Auto Attach configuration for a particular interface.
+      </p>
+
+      <column name="lldp" key="enable" type='{"type": "boolean"}'>
+          True to enable LLDP on this <ref table="Interface"/>.  If not
+          specified, LLDP will be disabled by default.
+      </column>
+    </group>
+
     <group title="Common Columns">
       The overall purpose of these columns is described under <code>Common
       Columns</code> at the beginning of this document.
@@ -3132,6 +3179,33 @@
           Linux "Hierarchical Fair Service Curve" classifier.
           See <code>http://linux-ip.net/articles/hfsc.en/</code> for
           information on how this classifier works.
+        </dd>
+      </dl>
+      <dl>
+        <dt><code>linux-sfq</code></dt>
+        <dd>
+          Linux ``Stochastic Fairness Queueing'' classifier. See
+          <code>tc-sfq</code>(8) (also at
+          <code>http://linux.die.net/man/8/tc-sfq</code>) for information on
+          how this classifier works.
+        </dd>
+      </dl>
+      <dl>
+        <dt><code>linux-codel</code></dt>
+        <dd>
+          Linux ``Controlled Delay'' classifier. See <code>tc-codel</code>(8)
+          (also at
+          <code>http://man7.org/linux/man-pages/man8/tc-codel.8.html</code>)
+          for information on how this classifier works.
+        </dd>
+      </dl>
+      <dl>
+        <dt><code>linux-fq_codel</code></dt>
+        <dd>
+          Linux ``Fair Queuing with Controlled Delay'' classifier. See
+          <code>tc-fq_codel</code>(8) (also at
+          <code>http://man7.org/linux/man-pages/man8/tc-fq_codel.8.html</code>)
+          for information on how this classifier works.
         </dd>
       </dl>
     </column>
@@ -3465,9 +3539,7 @@
             column="ssl"/> column in the <ref table="Open_vSwitch"/>
             table must point to a valid SSL configuration when this form
             is used.</p>
-            <p>If <var>port</var> is not specified, it currently
-            defaults to 6633.  In the future, the default will change to
-            6653, which is the IANA-defined value.</p>
+            <p>If <var>port</var> is not specified, it defaults to 6653.</p>
             <p>SSL support is an optional feature that is not always built as
             part of Open vSwitch.</p>
           </dd>
@@ -3478,12 +3550,10 @@
               <var>ip</var>, which must be expressed as an IP address (not a
               DNS name), where <var>ip</var> can be IPv4 or IPv6 address.  If
               <var>ip</var> is an IPv6 address, wrap it in square brackets,
-              e.g. <code>tcp:[::1]:6632</code>.
+              e.g. <code>tcp:[::1]:6653</code>.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults to
-              6633.  In the future, the default will change to 6653, which is
-              the IANA-defined value.
+              If <var>port</var> is not specified, it defaults to 6653.
             </p>
           </dd>
         </dl>
@@ -3500,20 +3570,18 @@
               DNS name), is specified, then connections are restricted to the
               specified local IP address (either IPv4 or IPv6).  If
               <var>ip</var> is an IPv6 address, wrap it in square brackets,
-              e.g. <code>pssl:6632:[::1]</code>.
+              e.g. <code>pssl:6653:[::1]</code>.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults to
-              6633.  If <var>ip</var> is not specified then it listens only on
+              If <var>port</var> is not specified, it defaults to
+              6653.  If <var>ip</var> is not specified then it listens only on
               IPv4 (but not IPv6) addresses.  The
               <ref table="Open_vSwitch" column="ssl"/>
               column in the <ref table="Open_vSwitch"/> table must point to a
               valid SSL configuration when this form is used.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults to
-              6633.  In the future, the default will change to 6653, which is
-              the IANA-defined value.
+              If <var>port</var> is not specified, it currently to 6653.
             </p>
             <p>
               SSL support is an optional feature that is not always built as
@@ -3528,13 +3596,11 @@
               DNS name), is specified, then connections are restricted to the
               specified local IP address (either IPv4 or IPv6).  If
               <var>ip</var> is an IPv6 address, wrap it in square brackets,
-              e.g. <code>ptcp:6632:[::1]</code>. If <var>ip</var> is not
+              e.g. <code>ptcp:6653:[::1]</code>. If <var>ip</var> is not
               specified then it listens only on IPv4 addresses.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults to
-              6633.  In the future, the default will change to 6653, which is
-              the IANA-defined value.
+              If <var>port</var> is not specified, it defaults to 6653.
             </p>
           </dd>
         </dl>
@@ -3879,9 +3945,7 @@
               form is used.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults
-              to 6632.  In the future, the default will change to 6640,
-              which is the IANA-defined value.
+              If <var>port</var> is not specified, it defaults to 6640.
             </p>
             <p>
               SSL support is an optional feature that is not always
@@ -3896,12 +3960,10 @@
               <var>ip</var>, which must be expressed as an IP address (not a
               DNS name), where <var>ip</var> can be IPv4 or IPv6 address.  If
               <var>ip</var> is an IPv6 address, wrap it in square brackets,
-              e.g. <code>tcp:[::1]:6632</code>.
+              e.g. <code>tcp:[::1]:6640</code>.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults
-              to 6632.  In the future, the default will change to 6640,
-              which is the IANA-defined value.
+              If <var>port</var> is not specified, it defaults to 6640.
             </p>
           </dd>
           <dt><code>pssl:</code>[<var>port</var>][<code>:<var>ip</var></code>]</dt>
@@ -3914,16 +3976,14 @@
               connections are restricted to the specified local IP address
               (either IPv4 or IPv6 address).  If <var>ip</var> is an IPv6
               address, wrap in square brackets,
-              e.g. <code>pssl:6632:[::1]</code>.  If <var>ip</var> is not
+              e.g. <code>pssl:6640:[::1]</code>.  If <var>ip</var> is not
               specified then it listens only on IPv4 (but not IPv6) addresses.
               The <ref table="Open_vSwitch" column="ssl"/> column in the <ref
               table="Open_vSwitch"/> table must point to a valid SSL
               configuration when this form is used.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults
-              to 6632.  In the future, the default will change to 6640,
-              which is the IANA-defined value.
+              If <var>port</var> is not specified, it defaults to 6640.
             </p>
             <p>
               SSL support is an optional feature that is not always built as
@@ -3940,13 +4000,11 @@
               connections are restricted to the specified local IP address
               (either IPv4 or IPv6 address).  If <var>ip</var> is an IPv6
               address, wrap it in square brackets,
-              e.g. <code>ptcp:6632:[::1]</code>.  If <var>ip</var> is not
+              e.g. <code>ptcp:6640:[::1]</code>.  If <var>ip</var> is not
               specified then it listens only on IPv4 addresses.
             </p>
             <p>
-              If <var>port</var> is not specified, it currently defaults
-              to 6632.  In the future, the default will change to 6640,
-              which is the IANA-defined value.
+              If <var>port</var> is not specified, it defaults to 6640.
             </p>
           </dd>
         </dl>
@@ -4490,4 +4548,53 @@
     </group>
   </table>
 
+  <table name="AutoAttach">
+    <p>Auto Attach configuration within a bridge.  The IETF Auto-Attach SPBM
+       draft standard describes a compact method of using IEEE 802.1AB Link
+       Layer Discovery Protocol (LLDP) together with a IEEE 802.1aq Shortest
+       Path Bridging (SPB) network to automatically attach network devices
+       to individual services in a SPB network.  The intent here is to allow
+       network applications and devices using OVS to be able to easily take
+       advantage of features offered by industry standard SPB networks.</p>
+
+    <p>Auto Attach (AA) uses LLDP to communicate between a directly connected
+       Auto Attach Client (AAC) and Auto Attach Server (AAS). The LLDP protocol
+       is extended to add two new Type-Length-Value tuples (TLVs). The first
+       new TLV supports the ongoing discovery of directly connected AA
+       correspondents. Auto Attach operates by regularly transmitting AA
+       discovery TLVs between the AA client and AA server. By exchanging these
+       discovery messages, both the AAC and AAS learn the system name and
+       system description of their peer. In the OVS context, OVS operates as
+       the AA client and the AA server resides on a switch at the edge of the
+       SPB network.</p>
+
+     <p>Once AA discovery has been completed the AAC then uses the
+       second new TLV to deliver identifier mappings from the AAC to the AAS. A primary
+       feature of Auto Attach is to facilitate the mapping of VLANs defined
+       outside the SPB network onto service ids (ISIDs) defined within the SPM
+       network. By doing so individual external VLANs can be mapped onto
+       specific SPB network services. These VLAN id to ISID mappings can be
+       configured and managed locally using new options added to the ovs-vsctl
+       command.</p>
+
+    <p>The Auto Attach OVS feature does not provide a full implementation of
+       the LLDP protocol. Support for the mandatory TLVs as defined by the LLDP
+       standard and support for the AA TLV extensions is provided. LLDP
+       protocol support in OVS can be enabled or disabled on a port by port
+       basis. LLDP support is disabled by default.</p>
+
+    <column name="system_name">
+      The system_name string is exported in LLDP messages.  It should uniquely
+      identify the bridge in the network.
+    </column>
+
+    <column name="system_description">
+      The system_description string is exported in LLDP messages.  It should
+      describe the type of software and hardware.
+    </column>
+
+    <column name="mappings">
+      A mapping from SPB network Individual Service Identifier (ISID) to VLAN id.
+    </column>
+  </table>
 </database>

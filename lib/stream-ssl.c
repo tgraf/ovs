@@ -317,7 +317,7 @@ ssl_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
         return error;
     }
 
-    error = inet_open_active(SOCK_STREAM, suffix, OFP_OLD_PORT, NULL, &fd,
+    error = inet_open_active(SOCK_STREAM, suffix, OFP_PORT, NULL, &fd,
                              dscp);
     if (fd >= 0) {
         int state = error ? STATE_TCP_CONNECTING : STATE_SSL_CONNECTING;
@@ -634,15 +634,14 @@ ssl_do_tx(struct stream *stream)
 
     for (;;) {
         int old_state = SSL_get_state(sslv->ssl);
-        int ret = SSL_write(sslv->ssl,
-                            ofpbuf_data(sslv->txbuf), ofpbuf_size(sslv->txbuf));
+        int ret = SSL_write(sslv->ssl, sslv->txbuf->data, sslv->txbuf->size);
         if (old_state != SSL_get_state(sslv->ssl)) {
             sslv->rx_want = SSL_NOTHING;
         }
         sslv->tx_want = SSL_NOTHING;
         if (ret > 0) {
             ofpbuf_pull(sslv->txbuf, ret);
-            if (ofpbuf_size(sslv->txbuf) == 0) {
+            if (sslv->txbuf->size == 0) {
                 return 0;
             }
         } else {
@@ -801,7 +800,7 @@ pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp,
         return retval;
     }
 
-    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_OLD_PORT, &ss, dscp, true);
+    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_PORT, &ss, dscp, true);
     if (fd < 0) {
         return -fd;
     }

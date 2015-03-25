@@ -75,7 +75,7 @@ main(int argc, char *argv[])
     argc -= retval;
     argv += retval;
 
-    proctitle_init(argc, argv);
+    ovs_cmdl_proctitle_init(argc, argv);
     service_start(&argc, &argv);
     remote = parse_options(argc, argv, &unixctl_path);
     fatal_ignore_sigpipe();
@@ -165,7 +165,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         {"dpdk", required_argument, NULL, OPT_DPDK},
         {NULL, 0, NULL, 0},
     };
-    char *short_options = long_options_to_short_options(long_options);
+    char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
 
     for (;;) {
         int c;
@@ -252,11 +252,13 @@ usage(void)
     daemon_usage();
     vlog_usage();
     printf("\nDPDK options:\n"
-           "  --dpdk options          Initialize DPDK datapath.\n");
+           "  --dpdk options            Initialize DPDK datapath.\n"
+           "  --cuse_dev_name BASENAME  override default character device name\n"
+           "                            for use with userspace vHost.\n");
     printf("\nOther options:\n"
-           "  --unixctl=SOCKET        override default control socket name\n"
-           "  -h, --help              display this help message\n"
-           "  -V, --version           display version information\n");
+           "  --unixctl=SOCKET          override default control socket name\n"
+           "  -h, --help                display this help message\n"
+           "  -V, --version             display version information\n");
     exit(EXIT_SUCCESS);
 }
 

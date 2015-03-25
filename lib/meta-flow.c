@@ -138,6 +138,9 @@ mf_is_all_wild(const struct mf_field *mf, const struct flow_wildcards *wc)
         return !wc->masks.conn_zone;
     case MFF_CONN_MARK:
         return !wc->masks.conn_mark;
+    case MFF_CONN_LABEL:
+        return is_all_zeros(&wc->masks.conn_label,
+                            sizeof(wc->masks.conn_label));
     CASE_MFF_REGS:
         return !wc->masks.regs[mf->id - MFF_REG0];
     CASE_MFF_XREGS:
@@ -358,6 +361,41 @@ mf_mask_field_and_prereqs(const struct mf_field *mf, struct flow *mask)
     }
 }
 
+/* Set bits of 'bm' corresponding to the field 'mf' and it's prerequisities. */
+void
+mf_bitmap_set_field_and_prereqs(const struct mf_field *mf, struct mf_bitmap *bm)
+{
+    bitmap_set1(bm->bm, mf->id);
+
+    switch (mf->prereqs) {
+    case MFP_ND:
+    case MFP_ND_SOLICIT:
+    case MFP_ND_ADVERT:
+        bitmap_set1(bm->bm, MFF_TCP_SRC);
+        bitmap_set1(bm->bm, MFF_TCP_DST);
+        /* Fall through. */
+    case MFP_TCP:
+    case MFP_UDP:
+    case MFP_SCTP:
+    case MFP_ICMPV4:
+    case MFP_ICMPV6:
+        /* nw_frag always unwildcarded. */
+        bitmap_set1(bm->bm, MFF_IP_PROTO);
+        /* Fall through. */
+    case MFP_ARP:
+    case MFP_IPV4:
+    case MFP_IPV6:
+    case MFP_MPLS:
+    case MFP_IP_ANY:
+        bitmap_set1(bm->bm, MFF_ETH_TYPE);
+        break;
+    case MFP_VLAN_VID:
+        bitmap_set1(bm->bm, MFF_VLAN_TCI);
+        break;
+    case MFP_NONE:
+        break;
+    }
+}
 
 /* Returns true if 'value' may be a valid value *as part of a masked match*,
  * false otherwise.
@@ -391,6 +429,7 @@ mf_is_value_valid(const struct mf_field *mf, const union mf_value *value)
     case MFF_CONN_STATE:
     case MFF_CONN_ZONE:
     case MFF_CONN_MARK:
+    case MFF_CONN_LABEL:
     CASE_MFF_REGS:
     CASE_MFF_XREGS:
     case MFF_ETH_SRC:
@@ -542,6 +581,10 @@ mf_get_value(const struct mf_field *mf, const struct flow *flow,
 
     case MFF_CONN_MARK:
         value->be32 = htonl(flow->conn_mark);
+        break;
+
+    case MFF_CONN_LABEL:
+        memcpy(&value->u128, &flow->conn_label, sizeof(flow->conn_label));
         break;
 
     CASE_MFF_REGS:
@@ -775,6 +818,10 @@ mf_set_value(const struct mf_field *mf,
 
     case MFF_CONN_MARK:
         match_set_conn_mark(match, ntohl(value->be32));
+        break;
+
+    case MFF_CONN_LABEL:
+        match_set_conn_label(match, value->u128);
         break;
 
     CASE_MFF_REGS:
@@ -1019,6 +1066,10 @@ mf_set_flow_value(const struct mf_field *mf,
 
     case MFF_CONN_MARK:
         flow->conn_mark = ntohl(value->be32);
+        break;
+
+    case MFF_CONN_LABEL:
+        memcpy(&flow->conn_label, &value->u128, sizeof(flow->conn_label));
         break;
 
     CASE_MFF_REGS:
@@ -1301,6 +1352,12 @@ mf_set_wild(const struct mf_field *mf, struct match *match)
         match->wc.masks.conn_mark = 0;
         break;
 
+    case MFF_CONN_LABEL:
+        memset(&match->flow.conn_label, 0, sizeof(match->flow.conn_label));
+        memset(&match->wc.masks.conn_label, 0,
+               sizeof(match->wc.masks.conn_label));
+        break;
+
     CASE_MFF_REGS:
         match_set_reg_masked(match, mf->id - MFF_REG0, 0, 0);
         break;
@@ -1560,6 +1617,11 @@ mf_set(const struct mf_field *mf,
                                    ntohl(mask->be32));
         break;
 
+    case MFF_CONN_LABEL:
+        match_set_conn_label_masked(match, value->u128,
+                                    mask->u128);
+        break;
+
     case MFF_ETH_DST:
         match_set_dl_dst_masked(match, value->mac, mask->mac);
         break;
@@ -1752,6 +1814,31 @@ mf_from_integer_string(const struct mf_field *mf, const char *s,
 
 syntax_error:
     return xasprintf("%s: bad syntax for %s", s, mf->name);
+}
+
+static char *
+mf_from_u128_string(const struct mf_field *mf, const char *s,
+                    ovs_u128 *valuep, ovs_u128 *maskp)
+{
+    int n;
+
+    ovs_assert(mf->n_bytes == sizeof(*valuep));
+
+    n = -1;
+    if (ovs_scan(s, U128_SCAN_FMT"%n", U128_SCAN_ARGS(valuep), &n)
+        && n == strlen(s)) {
+        memset(maskp, 0xff, sizeof(*maskp));
+        return NULL;
+    }
+
+    n = -1;
+    if (ovs_scan(s, U128_SCAN_FMT"/"U128_SCAN_FMT"%n",
+                 U128_SCAN_ARGS(valuep), U128_SCAN_ARGS(maskp), &n)
+        && n == strlen(s)) {
+        return NULL;
+    }
+
+    return xasprintf("%s: invalid u128 for %s", s, mf->name);
 }
 
 static char *
@@ -2159,6 +2246,11 @@ mf_parse(const struct mf_field *mf, const char *s,
         error = mf_from_conn_state_string(s, &value->u8, &mask->u8);
         break;
 
+    case MFS_CONN_LABEL:
+        ovs_assert(mf->n_bytes == sizeof(ovs_u128));
+        error = mf_from_u128_string(mf, s, &value->u128, &mask->u128);
+        break;
+
     case MFS_ETHERNET:
         error = mf_from_ethernet_string(mf, s, value->mac, mask->mac);
         break;
@@ -2292,6 +2384,12 @@ mf_format_conn_state_string(uint8_t value, uint8_t mask, struct ds *s)
     format_flags_masked(s, NULL, packet_conn_state_to_string, value, mask);
 }
 
+static void
+mf_format_conn_label_string(ovs_u128 value OVS_UNUSED, ovs_u128 mask OVS_UNUSED, struct ds *s OVS_UNUSED)
+{
+    /* XXX: Reuse match.c helper function? */
+}
+
 /* Appends to 's' a string representation of field 'mf' whose value is in
  * 'value' and 'mask'.  'mask' may be NULL to indicate an exact match. */
 void
@@ -2330,6 +2428,10 @@ mf_format(const struct mf_field *mf,
 
     case MFS_CONN_STATE:
         mf_format_conn_state_string(value->u8, mask ? mask->u8 : UINT8_MAX, s);
+        break;
+
+    case MFS_CONN_LABEL:
+        mf_format_conn_label_string(value->u128, mask->u128, s);
         break;
 
     case MFS_ETHERNET:
@@ -2437,4 +2539,13 @@ mf_format_subvalue(const union mf_subvalue *subvalue, struct ds *s)
         }
     }
     ds_put_char(s, '0');
+}
+
+void
+field_array_set(enum mf_field_id id, const union mf_value *value,
+                struct field_array *fa)
+{
+    ovs_assert(id < MFF_N_IDS);
+    bitmap_set1(fa->used.bm, id);
+    fa->value[id] = *value;
 }

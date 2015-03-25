@@ -115,6 +115,7 @@ ovs_key_attr_to_string(enum ovs_key_attr attr, char *namebuf, size_t bufsize)
     case OVS_KEY_ATTR_CONN_STATE: return "conn_state";
     case OVS_KEY_ATTR_CONN_ZONE: return "conn_zone";
     case OVS_KEY_ATTR_CONN_MARK: return "conn_mark";
+    case OVS_KEY_ATTR_CONN_LABEL: return "conn_label";
     case OVS_KEY_ATTR_TUNNEL: return "tunnel";
     case OVS_KEY_ATTR_IN_PORT: return "in_port";
     case OVS_KEY_ATTR_ETHERNET: return "eth";
@@ -603,10 +604,12 @@ static void
 format_odp_conntrack_action(struct ds *ds, const struct nlattr *attr)
 {
     static const struct nl_policy ovs_conntrack_policy[] = {
-        [OVS_CT_ATTR_FLAGS] = { .type = NL_A_U32 },
-        [OVS_CT_ATTR_ZONE] = { .type = NL_A_U16 },
+        [OVS_CT_ATTR_FLAGS] = { .type = NL_A_U32, .optional = true },
+        [OVS_CT_ATTR_ZONE] = { .type = NL_A_U16, .optional = true },
+        [OVS_CT_ATTR_HELPER] = { .type = NL_A_STRING, .optional = true },
     };
     struct nlattr *a[ARRAY_SIZE(ovs_conntrack_policy)];
+    const char *helper;
     uint32_t flags;
 
     if (!nl_parse_nested(attr, ovs_conntrack_policy, a, ARRAY_SIZE(a))) {
@@ -615,10 +618,15 @@ format_odp_conntrack_action(struct ds *ds, const struct nlattr *attr)
     }
 
     flags = nl_attr_get_u32(a[OVS_CT_ATTR_FLAGS]);
+    helper = a[OVS_CT_ATTR_HELPER] ? nl_attr_get(a[OVS_CT_ATTR_HELPER]) : NULL;
 
-    ds_put_format(ds, "ct(%szone=%"PRIu16")",
+    ds_put_format(ds, "ct(%szone=%"PRIu16,
                   flags & OVS_CT_F_COMMIT ? "commit," : "",
                   nl_attr_get_u16(a[OVS_CT_ATTR_ZONE]));
+    if (helper) {
+        ds_put_format(ds, ",helper=%s", helper);
+    }
+    ds_put_cstr(ds, ")");
 }
 
 static void
@@ -843,8 +851,8 @@ parse_odp_userspace_action(const char *s, struct ofpbuf *actions)
             if (end[0] != ')') {
                 return -EINVAL;
             }
-            user_data = ofpbuf_data(&buf);
-            user_data_size = ofpbuf_size(&buf);
+            user_data = buf.data;
+            user_data_size = buf.size;
             n = (end + 1) - s;
         }
     }
@@ -996,6 +1004,69 @@ ovs_parse_tnl_push(const char *s, struct ovs_action_push_tnl *data)
     }
 
     return n;
+}
+
+static int
+parse_conntrack_action(const char *s_, struct ofpbuf *actions)
+{
+    const char *s = s_;
+
+    if (ovs_scan(s, "ct(")) {
+        const char *helper = NULL;
+        uint32_t flags = 0;
+        uint16_t zone = 0;
+        size_t start;
+        char *end;
+
+        s += 3;
+        end = strchr(s, ')');
+        if (!end) {
+            return -EINVAL;
+        }
+
+        while (s != end) {
+            int n = -1;
+
+            s += strspn(s, delimiters);
+            if (ovs_scan(s, "commit%n", &n)) {
+                flags |= OVS_CT_F_COMMIT;
+                continue;
+            }
+            if (ovs_scan(s, "zone=%"SCNu16"%n", &zone, &n)) {
+                continue;
+            }
+            if (ovs_scan(s, "helper=%n", &n)) {
+                s += n;
+                n = strspn(s, delimiters);
+                if (n > 15) { /* XXX */
+                    return -EINVAL;
+                }
+                helper = s;
+            }
+
+            if (n < 0) {
+                return -EINVAL;
+            }
+            s += n;
+        }
+        s++;
+
+        start = nl_msg_start_nested(actions, OVS_ACTION_ATTR_CT);
+        if (flags) {
+            nl_msg_put_u32(actions, OVS_CT_ATTR_FLAGS, flags);
+        }
+        if (zone) {
+            nl_msg_put_u16(actions, OVS_CT_ATTR_ZONE, zone);
+        }
+        if (helper) {
+            int n = strspn(helper, delimiters);
+
+            nl_msg_put_string__(actions, OVS_CT_ATTR_HELPER, helper, n);
+        }
+        nl_msg_end_nested(actions, start);
+    }
+
+    return s_ - s;
 }
 
 static int
@@ -1156,20 +1227,11 @@ parse_odp_action(const char *s, const struct simap *port_names,
     }
 
     {
-        uint32_t flags = 0;
-        int zone;
-        int n = -1;
+        int retval;
 
-        if (ovs_scan(s, "ct(recirc,zone=%i)%n", &zone, &n)) {
-            flags |= OVS_CT_F_COMMIT;
-            nl_msg_put_u32(actions, OVS_ACTION_ATTR_CT, flags);
-            nl_msg_put_u16(actions, OVS_ACTION_ATTR_CT, zone);
-            return n;
-        }
-        if (ovs_scan(s, "ct(zone=%i)%n", &zone, &n)) {
-            nl_msg_put_u32(actions, OVS_ACTION_ATTR_CT, flags);
-            nl_msg_put_u16(actions, OVS_ACTION_ATTR_CT, zone);
-            return n;
+        retval = parse_conntrack_action(s, actions);
+        if (retval) {
+            return retval;
         }
     }
 
@@ -1204,7 +1266,7 @@ odp_actions_from_string(const char *s, const struct simap *port_names,
         return 0;
     }
 
-    old_size = ofpbuf_size(actions);
+    old_size = actions->size;
     for (;;) {
         int retval;
 
@@ -1215,7 +1277,7 @@ odp_actions_from_string(const char *s, const struct simap *port_names,
 
         retval = parse_odp_action(s, port_names, actions);
         if (retval < 0 || !strchr(delimiters, s[retval])) {
-            ofpbuf_set_size(actions, old_size);
+            actions->size = old_size;
             return -retval;
         }
         s += retval;
@@ -1243,6 +1305,7 @@ odp_flow_key_attr_len(uint16_t type)
     case OVS_KEY_ATTR_CONN_STATE: return 1;
     case OVS_KEY_ATTR_CONN_ZONE: return 2;
     case OVS_KEY_ATTR_CONN_MARK: return 4;
+    case OVS_KEY_ATTR_CONN_LABEL: return 16;
     case OVS_KEY_ATTR_TUNNEL: return -2;
     case OVS_KEY_ATTR_IN_PORT: return 4;
     case OVS_KEY_ATTR_ETHERNET: return sizeof(struct ovs_key_ethernet);
@@ -1864,6 +1927,7 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
         break;
 
     case OVS_KEY_ATTR_CONN_STATE:
+        /* XXX: This format doesn't deserialize. */
         if (!is_exact) {
             format_flags_masked(ds, NULL, packet_conn_state_to_string,
                                 nl_attr_get_u8(a), nl_attr_get_u8(ma));
@@ -1876,6 +1940,13 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
     case OVS_KEY_ATTR_CONN_ZONE:
         ds_put_format(ds, "%"PRIx16, nl_attr_get_u16(a));
         break;
+
+    case OVS_KEY_ATTR_CONN_LABEL: {
+        const ovs_u128 *mask = ma ? nl_attr_get(ma) : NULL;
+
+        odp_format_u128(ds, nl_attr_get(a), mask, true);
+        break;
+    }
 
     case OVS_KEY_ATTR_TUNNEL: {
         struct flow_tnl key, mask_;
@@ -2096,7 +2167,7 @@ generate_all_wildcard_mask(struct ofpbuf *ofp, const struct nlattr *key)
         nl_msg_end_nested(ofp, nested_mask);
     }
 
-    return ofpbuf_base(ofp);
+    return ofp->base;
 }
 
 static int
@@ -2507,9 +2578,9 @@ scan_conn_state(const char *s, uint8_t *key, uint8_t *mask)
     n = parse_flags(s, packet_conn_state_to_string, &flags,
                     UINT8_MAX, mask ? &fmask : NULL);
     if (n >= 0) {
-        *key = htons(flags);
+        *key = htonl(flags);
         if (mask) {
-            *mask = htons(fmask);
+            *mask = htonl(fmask);
         }
         return n;
     }
@@ -2727,6 +2798,15 @@ scan_mpls_bos(const char *s, ovs_be32 *key, ovs_be32 *mask)
         do {                                    \
             len = 0;
 
+/* Init as fully-masked as mask will not be scanned. */
+#define SCAN_BEGIN_FULLY_MASKED(NAME, TYPE)     \
+    SCAN_IF(NAME);                              \
+        TYPE skey, smask;                       \
+        memset(&skey, 0, sizeof skey);          \
+        memset(&smask, 0xff, sizeof smask);     \
+        do {                                    \
+            len = 0;
+
 /* VLAN needs special initialization. */
 #define SCAN_BEGIN_INIT(NAME, TYPE, KEY_INIT, MASK_INIT)  \
     SCAN_IF(NAME);                                        \
@@ -2788,9 +2868,9 @@ scan_mpls_bos(const char *s, ovs_be32 *key, ovs_be32 *mask)
         SCAN_TYPE(SCAN_AS, &skey, &smask);           \
     } SCAN_END_SINGLE(ATTR)
 
-#define SCAN_SINGLE_NO_MASK(NAME, TYPE, SCAN_AS, ATTR)       \
-    SCAN_BEGIN(NAME, TYPE) {                         \
-        SCAN_TYPE(SCAN_AS, &skey, NULL);           \
+#define SCAN_SINGLE_FULLY_MASKED(NAME, TYPE, SCAN_AS, ATTR) \
+    SCAN_BEGIN_FULLY_MASKED(NAME, TYPE) {                   \
+        SCAN_TYPE(SCAN_AS, &skey, NULL);                    \
     } SCAN_END_SINGLE(ATTR)
 
 /* scan_port needs one extra argument. */
@@ -2809,12 +2889,14 @@ parse_odp_key_mask_attr(const char *s, const struct simap *port_names,
 {
     SCAN_SINGLE("skb_priority(", uint32_t, u32, OVS_KEY_ATTR_PRIORITY);
     SCAN_SINGLE("skb_mark(", uint32_t, u32, OVS_KEY_ATTR_SKB_MARK);
-    SCAN_SINGLE_NO_MASK("recirc_id(", uint32_t, u32, OVS_KEY_ATTR_RECIRC_ID);
+    SCAN_SINGLE_FULLY_MASKED("recirc_id(", uint32_t, u32,
+                             OVS_KEY_ATTR_RECIRC_ID);
     SCAN_SINGLE("dp_hash(", uint32_t, u32, OVS_KEY_ATTR_DP_HASH);
 
     SCAN_SINGLE("conn_state(", uint8_t, conn_state, OVS_KEY_ATTR_CONN_STATE);
-    SCAN_SINGLE_NO_MASK("conn_zone(", uint16_t, u16, OVS_KEY_ATTR_CONN_ZONE);
+    SCAN_SINGLE("conn_zone(", uint16_t, u16, OVS_KEY_ATTR_CONN_ZONE);
     SCAN_SINGLE("conn_mark(", uint32_t, u32, OVS_KEY_ATTR_CONN_MARK);
+    SCAN_SINGLE("conn_label(", ovs_u128, u128, OVS_KEY_ATTR_CONN_LABEL);
 
     SCAN_BEGIN("tunnel(", struct flow_tnl) {
         SCAN_FIELD("tun_id=", be64, tun_id);
@@ -2970,7 +3052,7 @@ int
 odp_flow_from_string(const char *s, const struct simap *port_names,
                      struct ofpbuf *key, struct ofpbuf *mask)
 {
-    const size_t old_size = ofpbuf_size(key);
+    const size_t old_size = key->size;
     for (;;) {
         int retval;
 
@@ -2981,7 +3063,7 @@ odp_flow_from_string(const char *s, const struct simap *port_names,
 
         retval = parse_odp_key_mask_attr(s, port_names, key, mask);
         if (retval < 0) {
-            ofpbuf_set_size(key, old_size);
+            key->size = old_size;
             return -retval;
         }
         s += retval;
@@ -3056,6 +3138,10 @@ odp_flow_key_from_flow__(struct ofpbuf *buf, const struct flow *flow,
     }
     if (data->conn_mark) {
         nl_msg_put_u32(buf, OVS_KEY_ATTR_CONN_MARK, data->conn_mark);
+    }
+    if (ovs_u128_nonzero(data->conn_label)) {
+        nl_msg_put_unspec(buf, OVS_KEY_ATTR_CONN_LABEL, &data->conn_label,
+                          sizeof(data->conn_label));
     }
     if (recirc) {
         nl_msg_put_u32(buf, OVS_KEY_ATTR_RECIRC_ID, data->recirc_id);
@@ -3263,6 +3349,10 @@ odp_key_from_pkt_metadata(struct ofpbuf *buf, const struct pkt_metadata *md)
     if (md->conn_mark) {
         nl_msg_put_u32(buf, OVS_KEY_ATTR_CONN_MARK, md->conn_mark);
     }
+    if (ovs_u128_nonzero(md->conn_label)) {
+        nl_msg_put_unspec(buf, OVS_KEY_ATTR_CONN_LABEL, &md->conn_label,
+                          sizeof(md->conn_label));
+    }
 
     /* Add an ingress port attribute if 'odp_in_port' is not the magical
      * value "ODPP_NONE". */
@@ -3322,6 +3412,13 @@ odp_key_to_pkt_metadata(const struct nlattr *key, size_t key_len,
             md->conn_mark = nl_attr_get_u32(nla);
             wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_MARK);
             break;
+        case OVS_KEY_ATTR_CONN_LABEL: {
+            const ovs_u128 *cl = nl_attr_get(nla);
+
+            md->conn_label = *cl;
+            wanted_attrs &= ~(1u << OVS_KEY_ATTR_CONN_LABEL);
+            break;
+        }
         case OVS_KEY_ATTR_TUNNEL: {
             enum odp_key_fitness res;
 
@@ -3885,6 +3982,12 @@ odp_flow_key_to_flow__(const struct nlattr *key, size_t key_len,
         flow->conn_mark = nl_attr_get_u32(attrs[OVS_KEY_ATTR_CONN_MARK]);
         expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_MARK;
     }
+    if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_CONN_LABEL)) {
+        const ovs_u128 *cl = nl_attr_get(attrs[OVS_KEY_ATTR_CONN_LABEL]);
+
+        flow->conn_label = *cl;
+        expected_attrs |= UINT64_C(1) << OVS_KEY_ATTR_CONN_LABEL;
+    }
 
     if (present_attrs & (UINT64_C(1) << OVS_KEY_ATTR_TUNNEL)) {
         enum odp_key_fitness res;
@@ -4010,7 +4113,7 @@ odp_put_userspace_action(uint32_t pid,
     offset = nl_msg_start_nested(odp_actions, OVS_ACTION_ATTR_USERSPACE);
     nl_msg_put_u32(odp_actions, OVS_USERSPACE_ATTR_PID, pid);
     if (userdata) {
-        userdata_ofs = ofpbuf_size(odp_actions) + NLA_HDRLEN;
+        userdata_ofs = odp_actions->size + NLA_HDRLEN;
 
         /* The OVS kernel module before OVS 1.11 and the upstream Linux kernel
          * module before Linux 3.10 required the userdata to be exactly 8 bytes
@@ -4585,6 +4688,25 @@ commit_set_conn_mark_action(const struct flow *flow, struct flow *base_flow,
     }
 }
 
+static void
+commit_set_conn_label_action(const struct flow *flow, struct flow *base_flow,
+                             struct ofpbuf *odp_actions,
+                             struct flow_wildcards *wc,
+                             bool use_masked)
+{
+    ovs_u128 key, mask, base;
+
+    key = flow->conn_label;
+    base = base_flow->conn_label;
+    mask = wc->masks.conn_label;
+
+    if (commit(OVS_KEY_ATTR_CONN_LABEL, use_masked, &key, &base, &mask,
+               sizeof key, odp_actions)) {
+        base_flow->conn_label = base;
+        wc->masks.conn_label = mask;
+    }
+}
+
 /* If any of the flow key data that ODP actions can modify are different in
  * 'base' and 'flow', appends ODP actions to 'odp_actions' that change the flow
  * key from 'base' into 'flow', and then changes 'base' the same way.  Does not
@@ -4609,6 +4731,7 @@ commit_odp_actions(const struct flow *flow, struct flow *base,
     commit_set_priority_action(flow, base, odp_actions, wc, use_masked);
     commit_set_pkt_mark_action(flow, base, odp_actions, wc, use_masked);
     commit_set_conn_mark_action(flow, base, odp_actions, wc, use_masked);
+    commit_set_conn_label_action(flow, base, odp_actions, wc, use_masked);
 
     return slow;
 }

@@ -63,8 +63,7 @@ static void jsonrpc_error(struct jsonrpc *, int error);
 int
 jsonrpc_stream_open(const char *name, struct stream **streamp, uint8_t dscp)
 {
-    return stream_open_with_default_port(name, OVSDB_OLD_PORT,
-                                         streamp, dscp);
+    return stream_open_with_default_port(name, OVSDB_PORT, streamp, dscp);
 }
 
 /* This is just the same as pstream_open() except that it uses the default
@@ -72,8 +71,7 @@ jsonrpc_stream_open(const char *name, struct stream **streamp, uint8_t dscp)
 int
 jsonrpc_pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
 {
-    return pstream_open_with_default_port(name, OVSDB_OLD_PORT,
-                                          pstreamp, dscp);
+    return pstream_open_with_default_port(name, OVSDB_PORT, pstreamp, dscp);
 }
 
 /* Returns a new JSON-RPC stream that uses 'stream' for input and output.  The
@@ -119,11 +117,11 @@ jsonrpc_run(struct jsonrpc *rpc)
         struct ofpbuf *buf = ofpbuf_from_list(rpc->output.next);
         int retval;
 
-        retval = stream_send(rpc->stream, ofpbuf_data(buf), ofpbuf_size(buf));
+        retval = stream_send(rpc->stream, buf->data, buf->size);
         if (retval >= 0) {
             rpc->backlog -= retval;
             ofpbuf_pull(buf, retval);
-            if (!ofpbuf_size(buf)) {
+            if (!buf->size) {
                 list_remove(&buf->list_node);
                 rpc->output_count--;
                 ofpbuf_delete(buf);
@@ -257,7 +255,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 
     buf = xmalloc(sizeof *buf);
     ofpbuf_use(buf, s, length);
-    ofpbuf_set_size(buf, length);
+    buf->size = length;
     list_push_back(&rpc->output, &buf->list_node);
     rpc->output_count++;
     rpc->backlog += length;

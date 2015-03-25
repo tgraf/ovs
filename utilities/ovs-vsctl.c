@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014, 2015 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,6 +63,11 @@ struct vsctl_command_syntax {
     int min_args;               /* Min number of arguments following name. */
     int max_args;               /* Max number of arguments following name. */
 
+    /* Names that roughly describe the arguments that the command
+     * uses.  These should be similar to the names displayed in the
+     * man page or in the help output. */
+    const char *arguments;
+
     /* If nonnull, calls ovsdb_idl_add_column() or ovsdb_idl_add_table() for
      * each column or table in ctx->idl that it uses. */
     void (*prerequisites)(struct vsctl_context *ctx);
@@ -85,6 +90,7 @@ struct vsctl_command_syntax {
     /* A comma-separated list of supported options, e.g. "--a,--b", or the
      * empty string if the command does not support any options. */
     const char *options;
+
     enum { RO, RW } mode;       /* Does this command modify the database? */
 };
 
@@ -141,6 +147,8 @@ OVS_NO_RETURN static void vsctl_exit(int status);
 OVS_NO_RETURN static void vsctl_fatal(const char *, ...) OVS_PRINTF_FORMAT(1, 2);
 static char *default_db(void);
 OVS_NO_RETURN static void usage(void);
+OVS_NO_RETURN static void print_vsctl_commands(void);
+OVS_NO_RETURN static void print_vsctl_options(const struct option *options);
 static void parse_options(int argc, char *argv[], struct shash *local_options);
 static bool might_write_to_db(char **argv);
 
@@ -292,6 +300,8 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         OPT_PEER_CA_CERT,
         OPT_LOCAL,
         OPT_RETRY,
+        OPT_COMMANDS,
+        OPT_OPTIONS,
         VLOG_OPTION_ENUMS,
         TABLE_OPTION_ENUMS
     };
@@ -304,6 +314,8 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         {"timeout", required_argument, NULL, 't'},
         {"retry", no_argument, NULL, OPT_RETRY},
         {"help", no_argument, NULL, 'h'},
+        {"commands", no_argument, NULL, OPT_COMMANDS},
+        {"options", no_argument, NULL, OPT_OPTIONS},
         {"version", no_argument, NULL, 'V'},
         VLOG_LONG_OPTIONS,
         TABLE_LONG_OPTIONS,
@@ -320,7 +332,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
     size_t n_options;
     size_t i;
 
-    tmp = long_options_to_short_options(global_long_options);
+    tmp = ovs_cmdl_long_options_to_short_options(global_long_options);
     short_options = xasprintf("+%s", tmp);
     free(tmp);
 
@@ -417,6 +429,12 @@ parse_options(int argc, char *argv[], struct shash *local_options)
 
         case 'h':
             usage();
+
+        case OPT_COMMANDS:
+            print_vsctl_commands();
+
+        case OPT_OPTIONS:
+            print_vsctl_options(global_long_options);
 
         case 'V':
             ovs_print_version(0, 0);
@@ -693,6 +711,11 @@ SSL commands:\n\
   del-ssl                     delete the SSL configuration\n\
   set-ssl PRIV-KEY CERT CA-CERT  set the SSL configuration\n\
 \n\
+Auto Attach commands:\n\
+  add-aa-mapping BRIDGE I-SID VLAN   add Auto Attach mapping to BRIDGE\n\
+  del-aa-mapping BRIDGE I-SID VLAN   delete Auto Attach mapping VLAN from BRIDGE\n\
+  get-aa-mapping BRIDGE              get Auto Attach mappings from BRIDGE\n\
+\n\
 Switch commands:\n\
   emer-reset                  reset switch to known good state\n\
 \n\
@@ -728,6 +751,132 @@ Other options:\n\
   -V, --version               display version information\n");
     exit(EXIT_SUCCESS);
 }
+
+/* Converts the command arguments into format that can be parsed by
+ * bash completion script.
+ *
+ * Therein, arguments will be attached with following prefixes:
+ *
+ *    !argument :: The argument is required
+ *    ?argument :: The argument is optional
+ *    *argument :: The argument may appear any number (0 or more) times
+ *    +argument :: The argument may appear one or more times
+ *
+ */
+static void
+print_command_arguments(const struct vsctl_command_syntax *command)
+{
+    /*
+     * The argument string is parsed in reverse.  We use a stack 'oew_stack' to
+     * keep track of nested optionals.  Whenever a ']' is encountered, we push
+     * a bit to 'oew_stack'.  The bit is set to 1 if the ']' is not nested.
+     * Subsequently, we pop an entry everytime '[' is met.
+     *
+     * We use 'whole_word_is_optional' value to decide whether or not a ! or +
+     * should be added on encountering a space: if the optional surrounds the
+     * whole word then it shouldn't be, but if it is only a part of the word
+     * (i.e. [key=]value), it should be.
+     */
+    uint32_t oew_stack = 0;
+
+    const char *arguments = command->arguments;
+    int length = strlen(arguments);
+    if (!length) {
+        return;
+    }
+
+    /* Output buffer, written backward from end. */
+    char *output = xmalloc(2 * length);
+    char *outp = output + 2 * length;
+    *--outp = '\0';
+
+    bool in_repeated = false;
+    bool whole_word_is_optional = false;
+
+    for (const char *inp = arguments + length; inp > arguments; ) {
+        switch (*--inp) {
+        case ']':
+            oew_stack <<= 1;
+            if (inp[1] == '\0' || inp[1] == ' ' || inp[1] == '.') {
+                oew_stack |= 1;
+            }
+            break;
+        case '[':
+            /* Checks if the whole word is optional, and sets the
+             * 'whole_word_is_optional' accordingly. */
+            if ((inp == arguments || inp[-1] == ' ') && oew_stack & 1) {
+                *--outp = in_repeated ? '*' : '?';
+                whole_word_is_optional = true;
+            } else {
+                *--outp = '?';
+                whole_word_is_optional = false;
+            }
+            oew_stack >>= 1;
+            break;
+        case ' ':
+            if (!whole_word_is_optional) {
+                *--outp = in_repeated ? '+' : '!';
+            }
+            *--outp = ' ';
+            in_repeated = false;
+            whole_word_is_optional = false;
+            break;
+        case '.':
+            in_repeated = true;
+            break;
+        default:
+            *--outp = *inp;
+            break;
+        }
+    }
+    if (arguments[0] != '[' && outp != output + 2 * length - 1) {
+        *--outp = in_repeated ? '+' : '!';
+    }
+    printf("%s", outp);
+    free(output);
+}
+
+static void
+print_vsctl_commands(void)
+{
+    const struct vsctl_command_syntax *p;
+
+    for (p = get_all_commands(); p->name; p++) {
+        char *options = xstrdup(p->options);
+        char *options_begin = options;
+        char *item;
+
+        for (item = strsep(&options, ","); item != NULL;
+             item = strsep(&options, ",")) {
+            if (item[0] != '\0') {
+                printf("[%s] ", item);
+            }
+        }
+        printf(",%s,", p->name);
+        print_command_arguments(p);
+        printf("\n");
+
+        free(options_begin);
+    }
+
+    exit(EXIT_SUCCESS);
+}
+
+static void
+print_vsctl_options(const struct option *options)
+{
+    for (; options->name; options++) {
+        const struct option *o = options;
+
+        printf("--%s%s\n", o->name, o->has_arg ? "=ARG" : "");
+        if (o->flag == NULL && o->val > 0 && o->val <= UCHAR_MAX) {
+            printf("-%c%s\n", o->val, o->has_arg ? " ARG" : "");
+        }
+    }
+
+    exit(EXIT_SUCCESS);
+}
+
 
 static char *
 default_db(void)
@@ -1043,6 +1192,7 @@ pre_get_info(struct vsctl_context *ctx)
     ovsdb_idl_add_column(ctx->idl, &ovsrec_port_col_interfaces);
 
     ovsdb_idl_add_column(ctx->idl, &ovsrec_interface_col_name);
+
     ovsdb_idl_add_column(ctx->idl, &ovsrec_interface_col_ofport);
 }
 
@@ -2523,6 +2673,180 @@ cmd_set_ssl(struct vsctl_context *ctx)
 
     ovsrec_open_vswitch_set_ssl(ctx->ovs, ssl);
 }
+
+static void
+autoattach_insert_mapping(struct ovsrec_autoattach *aa,
+                          int64_t isid,
+                          int64_t vlan)
+{
+    int64_t *key_mappings, *value_mappings;
+    size_t i;
+
+    key_mappings = xmalloc(sizeof *aa->key_mappings * (aa->n_mappings + 1));
+    value_mappings = xmalloc(sizeof *aa->value_mappings * (aa->n_mappings + 1));
+
+    for (i = 0; i < aa->n_mappings; i++) {
+        key_mappings[i] = aa->key_mappings[i];
+        value_mappings[i] = aa->value_mappings[i];
+    }
+    key_mappings[aa->n_mappings] = isid;
+    value_mappings[aa->n_mappings] = vlan;
+
+    ovsrec_autoattach_set_mappings(aa, key_mappings, value_mappings,
+                                   aa->n_mappings + 1);
+
+    free(key_mappings);
+    free(value_mappings);
+}
+
+static void
+cmd_add_aa_mapping(struct vsctl_context *ctx)
+{
+    struct vsctl_bridge *br;
+    int64_t isid, vlan;
+    char *nptr = NULL;
+
+    isid = strtoull(ctx->argv[2], &nptr, 10);
+    if (nptr == ctx->argv[2] || nptr == NULL) {
+        vsctl_fatal("Invalid argument %s", ctx->argv[2]);
+        return;
+    }
+
+    vlan = strtoull(ctx->argv[3], &nptr, 10);
+    if (nptr == ctx->argv[3] || nptr == NULL) {
+        vsctl_fatal("Invalid argument %s", ctx->argv[3]);
+        return;
+    }
+
+    vsctl_context_populate_cache(ctx);
+
+    br = find_bridge(ctx, ctx->argv[1], true);
+    if (br->parent) {
+        br = br->parent;
+    }
+
+    if (br && br->br_cfg) {
+        if (!br->br_cfg->auto_attach) {
+            struct ovsrec_autoattach *aa = ovsrec_autoattach_insert(ctx->txn);
+            ovsrec_bridge_set_auto_attach(br->br_cfg, aa);
+        }
+        autoattach_insert_mapping(br->br_cfg->auto_attach, isid, vlan);
+    }
+}
+
+static void
+del_aa_mapping(struct ovsrec_autoattach *aa,
+               int64_t isid,
+               int64_t vlan)
+{
+    int64_t *key_mappings, *value_mappings;
+    size_t i, n;
+
+    key_mappings = xmalloc(sizeof *aa->key_mappings * (aa->n_mappings));
+    value_mappings = xmalloc(sizeof *value_mappings * (aa->n_mappings));
+
+    for (i = n = 0; i < aa->n_mappings; i++) {
+        if (aa->key_mappings[i] != isid && aa->value_mappings[i] != vlan) {
+            key_mappings[n] = aa->key_mappings[i];
+            value_mappings[n++] = aa->value_mappings[i];
+        }
+    }
+
+    ovsrec_autoattach_set_mappings(aa, key_mappings, value_mappings, n);
+
+    free(key_mappings);
+    free(value_mappings);
+}
+
+static void
+cmd_del_aa_mapping(struct vsctl_context *ctx)
+{
+    struct vsctl_bridge *br;
+    int64_t isid, vlan;
+    char *nptr = NULL;
+
+    isid = strtoull(ctx->argv[2], &nptr, 10);
+    if (nptr == ctx->argv[2] || nptr == NULL) {
+        vsctl_fatal("Invalid argument %s", ctx->argv[2]);
+        return;
+    }
+
+    vlan = strtoull(ctx->argv[3], &nptr, 10);
+    if (nptr == ctx->argv[3] || nptr == NULL) {
+        vsctl_fatal("Invalid argument %s", ctx->argv[3]);
+        return;
+    }
+
+    vsctl_context_populate_cache(ctx);
+
+    br = find_bridge(ctx, ctx->argv[1], true);
+    if (br->parent) {
+        br = br->parent;
+    }
+
+    if (br && br->br_cfg && br->br_cfg->auto_attach &&
+        br->br_cfg->auto_attach->key_mappings &&
+        br->br_cfg->auto_attach->value_mappings) {
+        size_t i;
+
+        for (i = 0; i < br->br_cfg->auto_attach->n_mappings; i++) {
+            if (br->br_cfg->auto_attach->key_mappings[i] == isid &&
+                br->br_cfg->auto_attach->value_mappings[i] == vlan) {
+                del_aa_mapping(br->br_cfg->auto_attach, isid, vlan);
+                break;
+            }
+        }
+    }
+}
+
+static void
+pre_aa_mapping(struct vsctl_context *ctx)
+{
+    pre_get_info(ctx);
+
+    ovsdb_idl_add_column(ctx->idl, &ovsrec_bridge_col_auto_attach);
+    ovsdb_idl_add_column(ctx->idl, &ovsrec_autoattach_col_mappings);
+}
+
+static void
+verify_auto_attach(struct ovsrec_bridge *bridge)
+{
+    if (bridge) {
+        ovsrec_bridge_verify_auto_attach(bridge);
+
+        if (bridge->auto_attach) {
+            ovsrec_autoattach_verify_mappings(bridge->auto_attach);
+        }
+    }
+}
+
+static void
+cmd_get_aa_mapping(struct vsctl_context *ctx)
+{
+    struct vsctl_bridge *br;
+
+    vsctl_context_populate_cache(ctx);
+
+    br = find_bridge(ctx, ctx->argv[1], true);
+    if (br->parent) {
+        br = br->parent;
+    }
+
+    verify_auto_attach(br->br_cfg);
+
+    if (br && br->br_cfg && br->br_cfg->auto_attach &&
+        br->br_cfg->auto_attach->key_mappings &&
+        br->br_cfg->auto_attach->value_mappings) {
+        size_t i;
+
+        for (i = 0; i < br->br_cfg->auto_attach->n_mappings; i++) {
+            ds_put_format(&ctx->output, "%"PRId64" %"PRId64"\n",
+                          br->br_cfg->auto_attach->key_mappings[i],
+                          br->br_cfg->auto_attach->value_mappings[i]);
+        }
+    }
+}
+
 
 /* Parameter commands. */
 
@@ -2601,6 +2925,12 @@ static const struct vsctl_table_class tables[] = {
        &ovsrec_bridge_col_ipfix},
       {&ovsrec_table_flow_sample_collector_set, NULL,
        &ovsrec_flow_sample_collector_set_col_ipfix}}},
+
+    {&ovsrec_table_autoattach,
+     {{&ovsrec_table_bridge,
+       &ovsrec_bridge_col_name,
+       &ovsrec_bridge_col_auto_attach},
+      {NULL, NULL, NULL}}},
 
     {&ovsrec_table_flow_sample_collector_set,
      {{NULL, NULL, NULL},
@@ -3545,6 +3875,7 @@ cmd_remove(struct vsctl_context *ctx)
         rm_type.n_max = UINT_MAX;
         error = ovsdb_datum_from_string(&rm, &rm_type,
                                         ctx->argv[i], ctx->symtab);
+
         if (error) {
             if (ovsdb_type_is_map(&rm_type)) {
                 rm_type.value.type = OVSDB_TYPE_VOID;
@@ -4261,77 +4592,125 @@ try_again:
     free(error);
 }
 
+/*
+ * Developers who add new commands to the 'struct vsctl_command_syntax' must
+ * define the 'arguments' member of the struct.  The following keywords are
+ * available for composing the argument format:
+ *
+ *    TABLE     RECORD       BRIDGE       PARENT         PORT
+ *    KEY       VALUE        ARG          KEY=VALUE      ?KEY=VALUE
+ *    IFACE     SYSIFACE     COLUMN       COLUMN?:KEY    COLUMN?:KEY=VALUE
+ *    MODE      CA-CERT      CERTIFICATE  PRIVATE-KEY
+ *    TARGET    NEW-* (e.g. NEW-PORT)
+ *
+ * For argument types not listed above, just uses 'ARG' as place holder.
+ *
+ * Encloses the keyword with '[]' if it is optional.  Appends '...' to
+ * keyword or enclosed keyword to indicate that the argument can be specified
+ * multiple times.
+ *
+ * */
 static const struct vsctl_command_syntax all_commands[] = {
     /* Open vSwitch commands. */
-    {"init", 0, 0, NULL, cmd_init, NULL, "", RW},
-    {"show", 0, 0, pre_cmd_show, cmd_show, NULL, "", RO},
+    {"init", 0, 0, "", NULL, cmd_init, NULL, "", RW},
+    {"show", 0, 0, "", pre_cmd_show, cmd_show, NULL, "", RO},
 
     /* Bridge commands. */
-    {"add-br", 1, 3, pre_get_info, cmd_add_br, NULL, "--may-exist", RW},
-    {"del-br", 1, 1, pre_get_info, cmd_del_br, NULL, "--if-exists", RW},
-    {"list-br", 0, 0, pre_get_info, cmd_list_br, NULL, "--real,--fake", RO},
-    {"br-exists", 1, 1, pre_get_info, cmd_br_exists, NULL, "", RO},
-    {"br-to-vlan", 1, 1, pre_get_info, cmd_br_to_vlan, NULL, "", RO},
-    {"br-to-parent", 1, 1, pre_get_info, cmd_br_to_parent, NULL, "", RO},
-    {"br-set-external-id", 2, 3, pre_cmd_br_set_external_id,
-     cmd_br_set_external_id, NULL, "", RW},
-    {"br-get-external-id", 1, 2, pre_cmd_br_get_external_id,
+    {"add-br", 1, 3, "NEW-BRIDGE [PARENT] [NEW-VLAN]", pre_get_info,
+     cmd_add_br, NULL, "--may-exist", RW},
+    {"del-br", 1, 1, "BRIDGE", pre_get_info, cmd_del_br,
+     NULL, "--if-exists", RW},
+    {"list-br", 0, 0, "", pre_get_info, cmd_list_br, NULL, "--real,--fake",
+     RO},
+    {"br-exists", 1, 1, "BRIDGE", pre_get_info, cmd_br_exists, NULL, "", RO},
+    {"br-to-vlan", 1, 1, "BRIDGE", pre_get_info, cmd_br_to_vlan, NULL, "",
+     RO},
+    {"br-to-parent", 1, 1, "BRIDGE", pre_get_info, cmd_br_to_parent, NULL,
+     "", RO},
+    {"br-set-external-id", 2, 3, "BRIDGE KEY [VALUE]",
+     pre_cmd_br_set_external_id, cmd_br_set_external_id, NULL, "", RW},
+    {"br-get-external-id", 1, 2, "BRIDGE [KEY]", pre_cmd_br_get_external_id,
      cmd_br_get_external_id, NULL, "", RO},
 
     /* Port commands. */
-    {"list-ports", 1, 1, pre_get_info, cmd_list_ports, NULL, "", RO},
-    {"add-port", 2, INT_MAX, pre_get_info, cmd_add_port, NULL, "--may-exist",
-     RW},
-    {"add-bond", 4, INT_MAX, pre_get_info, cmd_add_bond, NULL,
-     "--may-exist,--fake-iface", RW},
-    {"del-port", 1, 2, pre_get_info, cmd_del_port, NULL,
+    {"list-ports", 1, 1, "BRIDGE", pre_get_info, cmd_list_ports, NULL, "",
+     RO},
+    {"add-port", 2, INT_MAX, "BRIDGE NEW-PORT [COLUMN[:KEY]=VALUE]...",
+     pre_get_info, cmd_add_port, NULL, "--may-exist", RW},
+    {"add-bond", 4, INT_MAX,
+     "BRIDGE NEW-BOND-PORT SYSIFACE... [COLUMN[:KEY]=VALUE]...", pre_get_info,
+     cmd_add_bond, NULL, "--may-exist,--fake-iface", RW},
+    {"del-port", 1, 2, "[BRIDGE] PORT|IFACE", pre_get_info, cmd_del_port, NULL,
      "--if-exists,--with-iface", RW},
-    {"port-to-br", 1, 1, pre_get_info, cmd_port_to_br, NULL, "", RO},
+    {"port-to-br", 1, 1, "PORT", pre_get_info, cmd_port_to_br, NULL, "", RO},
 
     /* Interface commands. */
-    {"list-ifaces", 1, 1, pre_get_info, cmd_list_ifaces, NULL, "", RO},
-    {"iface-to-br", 1, 1, pre_get_info, cmd_iface_to_br, NULL, "", RO},
-
-    /* Controller commands. */
-    {"get-controller", 1, 1, pre_controller, cmd_get_controller, NULL, "", RO},
-    {"del-controller", 1, 1, pre_controller, cmd_del_controller, NULL, "", RW},
-    {"set-controller", 1, INT_MAX, pre_controller, cmd_set_controller, NULL,
-     "", RW},
-    {"get-fail-mode", 1, 1, pre_get_info, cmd_get_fail_mode, NULL, "", RO},
-    {"del-fail-mode", 1, 1, pre_get_info, cmd_del_fail_mode, NULL, "", RW},
-    {"set-fail-mode", 2, 2, pre_get_info, cmd_set_fail_mode, NULL, "", RW},
-
-    /* Manager commands. */
-    {"get-manager", 0, 0, pre_manager, cmd_get_manager, NULL, "", RO},
-    {"del-manager", 0, 0, pre_manager, cmd_del_manager, NULL, "", RW},
-    {"set-manager", 1, INT_MAX, pre_manager, cmd_set_manager, NULL, "", RW},
-
-    /* SSL commands. */
-    {"get-ssl", 0, 0, pre_cmd_get_ssl, cmd_get_ssl, NULL, "", RO},
-    {"del-ssl", 0, 0, pre_cmd_del_ssl, cmd_del_ssl, NULL, "", RW},
-    {"set-ssl", 3, 3, pre_cmd_set_ssl, cmd_set_ssl, NULL, "--bootstrap", RW},
-
-    /* Switch commands. */
-    {"emer-reset", 0, 0, pre_cmd_emer_reset, cmd_emer_reset, NULL, "", RW},
-
-    /* Database commands. */
-    {"comment", 0, INT_MAX, NULL, NULL, NULL, "", RO},
-    {"get", 2, INT_MAX, pre_cmd_get, cmd_get, NULL, "--if-exists,--id=", RO},
-    {"list", 1, INT_MAX, pre_cmd_list, cmd_list, NULL,
-     "--if-exists,--columns=", RO},
-    {"find", 1, INT_MAX, pre_cmd_find, cmd_find, NULL, "--columns=", RO},
-    {"set", 3, INT_MAX, pre_cmd_set, cmd_set, NULL, "--if-exists", RW},
-    {"add", 4, INT_MAX, pre_cmd_add, cmd_add, NULL, "--if-exists", RW},
-    {"remove", 4, INT_MAX, pre_cmd_remove, cmd_remove, NULL, "--if-exists",
-     RW},
-    {"clear", 3, INT_MAX, pre_cmd_clear, cmd_clear, NULL, "--if-exists", RW},
-    {"create", 2, INT_MAX, pre_create, cmd_create, post_create, "--id=", RW},
-    {"destroy", 1, INT_MAX, pre_cmd_destroy, cmd_destroy, NULL,
-     "--if-exists,--all", RW},
-    {"wait-until", 2, INT_MAX, pre_cmd_wait_until, cmd_wait_until, NULL, "",
+    {"list-ifaces", 1, 1, "BRIDGE", pre_get_info, cmd_list_ifaces, NULL, "",
+     RO},
+    {"iface-to-br", 1, 1, "IFACE", pre_get_info, cmd_iface_to_br, NULL, "",
      RO},
 
-    {NULL, 0, 0, NULL, NULL, NULL, NULL, RO},
+    /* Controller commands. */
+    {"get-controller", 1, 1, "BRIDGE", pre_controller, cmd_get_controller,
+     NULL, "", RO},
+    {"del-controller", 1, 1, "BRIDGE", pre_controller, cmd_del_controller,
+     NULL, "", RW},
+    {"set-controller", 1, INT_MAX, "BRIDGE TARGET...", pre_controller,
+     cmd_set_controller, NULL, "", RW},
+    {"get-fail-mode", 1, 1, "BRIDGE", pre_get_info, cmd_get_fail_mode, NULL,
+     "", RO},
+    {"del-fail-mode", 1, 1, "BRIDGE", pre_get_info, cmd_del_fail_mode, NULL,
+     "", RW},
+    {"set-fail-mode", 2, 2, "BRIDGE MODE", pre_get_info, cmd_set_fail_mode,
+     NULL, "", RW},
+
+    /* Manager commands. */
+    {"get-manager", 0, 0, "", pre_manager, cmd_get_manager, NULL, "", RO},
+    {"del-manager", 0, 0, "", pre_manager, cmd_del_manager, NULL, "", RW},
+    {"set-manager", 1, INT_MAX, "TARGET...", pre_manager, cmd_set_manager,
+     NULL, "", RW},
+
+    /* SSL commands. */
+    {"get-ssl", 0, 0, "", pre_cmd_get_ssl, cmd_get_ssl, NULL, "", RO},
+    {"del-ssl", 0, 0, "", pre_cmd_del_ssl, cmd_del_ssl, NULL, "", RW},
+    {"set-ssl", 3, 3, "PRIVATE-KEY CERTIFICATE CA-CERT", pre_cmd_set_ssl,
+     cmd_set_ssl, NULL, "--bootstrap", RW},
+
+    /* Auto Attach commands. */
+    {"add-aa-mapping", 3, 3, "BRIDGE ARG ARG", pre_aa_mapping, cmd_add_aa_mapping,
+     NULL, "", RW},
+    {"del-aa-mapping", 3, 3, "BRIDGE ARG ARG", pre_aa_mapping, cmd_del_aa_mapping,
+     NULL, "", RW},
+    {"get-aa-mapping", 1, 1, "BRIDGE", pre_aa_mapping, cmd_get_aa_mapping,
+     NULL, "", RO},
+
+    /* Switch commands. */
+    {"emer-reset", 0, 0, "", pre_cmd_emer_reset, cmd_emer_reset, NULL, "", RW},
+
+    /* Database commands. */
+    {"comment", 0, INT_MAX, "[ARG]...", NULL, NULL, NULL, "", RO},
+    {"get", 2, INT_MAX, "TABLE RECORD [COLUMN[:KEY]]...",pre_cmd_get, cmd_get,
+     NULL, "--if-exists,--id=", RO},
+    {"list", 1, INT_MAX, "TABLE [RECORD]...", pre_cmd_list, cmd_list, NULL,
+     "--if-exists,--columns=", RO},
+    {"find", 1, INT_MAX, "TABLE [COLUMN[:KEY]=VALUE]...", pre_cmd_find,
+     cmd_find, NULL, "--columns=", RO},
+    {"set", 3, INT_MAX, "TABLE RECORD COLUMN[:KEY]=VALUE...", pre_cmd_set,
+     cmd_set, NULL, "--if-exists", RW},
+    {"add", 4, INT_MAX, "TABLE RECORD COLUMN [KEY=]VALUE...", pre_cmd_add,
+     cmd_add, NULL, "--if-exists", RW},
+    {"remove", 4, INT_MAX, "TABLE RECORD COLUMN KEY|VALUE|KEY=VALUE...",
+     pre_cmd_remove, cmd_remove, NULL, "--if-exists", RW},
+    {"clear", 3, INT_MAX, "TABLE RECORD COLUMN...", pre_cmd_clear, cmd_clear,
+     NULL, "--if-exists", RW},
+    {"create", 2, INT_MAX, "TABLE COLUMN[:KEY]=VALUE...", pre_create,
+     cmd_create, post_create, "--id=", RW},
+    {"destroy", 1, INT_MAX, "TABLE [RECORD]...", pre_cmd_destroy, cmd_destroy,
+     NULL, "--if-exists,--all", RW},
+    {"wait-until", 2, INT_MAX, "TABLE RECORD [COLUMN[:KEY]=VALUE]...",
+     pre_cmd_wait_until, cmd_wait_until, NULL, "", RO},
+
+    {NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, RO},
 };
 
 static const struct vsctl_command_syntax *get_all_commands(void)

@@ -37,13 +37,14 @@
 #include "netdev.h"
 #include "nx-match.h"
 #include "ofp-actions.h"
+#include "ofpbuf.h"
 #include "ofp-errors.h"
 #include "ofp-msgs.h"
 #include "ofp-util.h"
-#include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "openflow/nicira-ext.h"
 #include "packets.h"
+#include "dp-packet.h"
 #include "type-props.h"
 #include "unaligned.h"
 #include "odp-util.h"
@@ -61,33 +62,32 @@ char *
 ofp_packet_to_string(const void *data, size_t len)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
-    const struct pkt_metadata md = PKT_METADATA_INITIALIZER(0);
-    struct ofpbuf buf;
+    struct dp_packet buf;
     struct flow flow;
     size_t l4_size;
 
-    ofpbuf_use_const(&buf, data, len);
-    flow_extract(&buf, &md, &flow);
+    dp_packet_use_const(&buf, data, len);
+    flow_extract(&buf, &flow);
     flow_format(&ds, &flow);
 
-    l4_size = ofpbuf_l4_size(&buf);
+    l4_size = dp_packet_l4_size(&buf);
 
     if (flow.nw_proto == IPPROTO_TCP && l4_size >= TCP_HEADER_LEN) {
-        struct tcp_header *th = ofpbuf_l4(&buf);
+        struct tcp_header *th = dp_packet_l4(&buf);
         ds_put_format(&ds, " tcp_csum:%"PRIx16, ntohs(th->tcp_csum));
     } else if (flow.nw_proto == IPPROTO_UDP && l4_size >= UDP_HEADER_LEN) {
-        struct udp_header *uh = ofpbuf_l4(&buf);
+        struct udp_header *uh = dp_packet_l4(&buf);
         ds_put_format(&ds, " udp_csum:%"PRIx16, ntohs(uh->udp_csum));
     } else if (flow.nw_proto == IPPROTO_SCTP && l4_size >= SCTP_HEADER_LEN) {
-        struct sctp_header *sh = ofpbuf_l4(&buf);
+        struct sctp_header *sh = dp_packet_l4(&buf);
         ds_put_format(&ds, " sctp_csum:%"PRIx32,
                       ntohl(get_16aligned_be32(&sh->sctp_csum)));
     } else if (flow.nw_proto == IPPROTO_ICMP && l4_size >= ICMP_HEADER_LEN) {
-        struct icmp_header *icmph = ofpbuf_l4(&buf);
+        struct icmp_header *icmph = dp_packet_l4(&buf);
         ds_put_format(&ds, " icmp_csum:%"PRIx16,
                       ntohs(icmph->icmp_csum));
     } else if (flow.nw_proto == IPPROTO_ICMPV6 && l4_size >= ICMP6_HEADER_LEN) {
-        struct icmp6_header *icmp6h = ofpbuf_l4(&buf);
+        struct icmp6_header *icmp6h = dp_packet_l4(&buf);
         ds_put_format(&ds, " icmp6_csum:%"PRIx16,
                       ntohs(icmp6h->icmp6_cksum));
     }
@@ -167,6 +167,9 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
 
     if (pin.fmd.conn_mark != 0) {
         ds_put_format(string, " conn_mark=0x%"PRIx32, pin.fmd.conn_mark);
+    }
+    if (ovs_u128_nonzero(pin.fmd.conn_label)) {
+        ds_put_format(string, " conn_label="U128_FMT, U128_ARGS(&pin.fmd.conn_label));
     }
 
     ds_put_format(string, " (via %s)",
@@ -1366,9 +1369,9 @@ ofp_print_error_msg(struct ds *string, const struct ofp_header *oh)
     ds_put_format(string, " %s\n", ofperr_get_name(error));
 
     if (error == OFPERR_OFPHFC_INCOMPATIBLE || error == OFPERR_OFPHFC_EPERM) {
-        ds_put_printable(string, ofpbuf_data(&payload), ofpbuf_size(&payload));
+        ds_put_printable(string, payload.data, payload.size);
     } else {
-        s = ofp_to_string(ofpbuf_data(&payload), ofpbuf_size(&payload), 1);
+        s = ofp_to_string(payload.data, payload.size, 1);
         ds_put_cstr(string, s);
         free(s);
     }
@@ -2167,8 +2170,8 @@ ofp_print_bucket_id(struct ds *s, const char *label, uint32_t bucket_id,
 
 static void
 ofp_print_group(struct ds *s, uint32_t group_id, uint8_t type,
-                struct ovs_list *p_buckets, enum ofp_version ofp_version,
-                bool suppress_type)
+                struct ovs_list *p_buckets, struct ofputil_group_props *props,
+                enum ofp_version ofp_version, bool suppress_type)
 {
     struct ofputil_bucket *bucket;
 
@@ -2178,6 +2181,26 @@ ofp_print_group(struct ds *s, uint32_t group_id, uint8_t type,
         static const char *type_str[] = { "all", "select", "indirect",
                                           "ff", "unknown" };
         ds_put_format(s, ",type=%s", type_str[type > 4 ? 4 : type]);
+    }
+
+    if (props->selection_method[0]) {
+        size_t mark, start;
+
+        ds_put_format(s, ",selection_method=%s,", props->selection_method);
+        if (props->selection_method_param) {
+            ds_put_format(s, "selection_method_param=%"PRIu64",",
+                          props->selection_method_param);
+        }
+
+        /* Allow rewinding to immediately before the trailing ',' */
+        mark = s->length - 1;
+
+        ds_put_cstr(s, "fields=");
+        start = s->length;
+        oxm_format_field_array(s, &props->fields);
+        if (s->length == start) {
+            ds_truncate(s, mark);
+        }
     }
 
     if (!p_buckets) {
@@ -2237,8 +2260,8 @@ ofp_print_group_desc(struct ds *s, const struct ofp_header *oh)
 
         ds_put_char(s, '\n');
         ds_put_char(s, ' ');
-        ofp_print_group(s, gd.group_id, gd.type, &gd.buckets, oh->version,
-                        false);
+        ofp_print_group(s, gd.group_id, gd.type, &gd.buckets, &gd.props,
+                        oh->version, false);
         ofputil_bucket_list_destroy(&gd.buckets);
      }
 }
@@ -2391,8 +2414,8 @@ ofp_print_group_mod(struct ds *s, const struct ofp_header *oh)
                             gm.command_bucket_id, oh->version);
     }
 
-    ofp_print_group(s, gm.group_id, gm.type, &gm.buckets, oh->version,
-                    bucket_command);
+    ofp_print_group(s, gm.group_id, gm.type, &gm.buckets, &gm.props,
+                    oh->version, bucket_command);
     ofputil_bucket_list_destroy(&gm.buckets);
 }
 

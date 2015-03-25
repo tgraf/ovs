@@ -1,5 +1,8 @@
 Post-v2.3.0
 ---------------------
+   - Added support for SFQ, FQ_CoDel and CoDel qdiscs. 
+   - Add bash command-line completion support for ovs-vsctl Please check
+     utilities/ovs-command-compgen.INSTALL.md for how to use.
    - The MAC learning feature now includes per-port fairness to mitigate
      MAC flooding attacks.
    - New support for a "conjunctive match" OpenFlow extension, which
@@ -41,6 +44,9 @@ Post-v2.3.0
        is executed last, and only if the action set has no "output" or "group"
        action.
      * OpenFlow 1.4+ flow "importance" is now maintained in the flow table.
+     * A new Netronome extension to OpenFlow 1.5+ allows control over the
+       fields hashed for OpenFlow select groups.  See "selection_method" and
+       related options in ovs-ofctl(8) for details.
    - ovs-pki: Changed message digest algorithm from MD5 to SHA-1 because
      MD5 is no longer secure and some operating systems have started to disable
      it in OpenSSL.
@@ -70,6 +76,13 @@ Post-v2.3.0
      console or file for vlog logging instead of the previously used term
      'facility'.
    - Support for VXLAN Group Policy extension
+   - Initial support for the IETF Auto-Attach SPBM draft standard. This
+     contains rudimentary support for the LLDP protocol as needed for
+     Auto-Attach.
+   - The default OpenFlow and OVSDB ports are now the IANA-assigned
+     numbers.  OpenFlow is 6653 and OVSDB is 6640.
+   - Support for DPDK vHost.
+   - Support for outer UDP checksums in Geneve and VXLAN.
 
 
 v2.3.0 - 14 Aug 2014

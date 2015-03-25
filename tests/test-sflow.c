@@ -607,13 +607,13 @@ static void
 print_sflow(struct ofpbuf *buf)
 {
     char *dgram_buf;
-    int dgram_len = ofpbuf_size(buf);
+    int dgram_len = buf->size;
     struct sflow_xdr xdrDatagram;
     struct sflow_xdr *x = &xdrDatagram;
 
     memset(x, 0, sizeof *x);
     if (SFLOWXDR_try(x)) {
-        SFLOWXDR_assert(x, (dgram_buf = ofpbuf_try_pull(buf, ofpbuf_size(buf))));
+        SFLOWXDR_assert(x, (dgram_buf = ofpbuf_try_pull(buf, buf->size)));
         sflowxdr_init(x, dgram_buf, dgram_len);
         SFLOWXDR_assert(x, dgram_len >= SFLOW_MIN_LEN);
         process_datagram(x);
@@ -634,7 +634,7 @@ test_sflow_main(int argc, char *argv[])
     int error;
     int sock;
 
-    proctitle_init(argc, argv);
+    ovs_cmdl_proctitle_init(argc, argv);
     set_program_name(argv[0]);
     service_start(&argc, &argv);
     parse_options(argc, argv);
@@ -669,7 +669,7 @@ test_sflow_main(int argc, char *argv[])
 
         ofpbuf_clear(&buf);
         do {
-            retval = recv(sock, ofpbuf_data(&buf), buf.allocated, 0);
+            retval = recv(sock, buf.data, buf.allocated, 0);
         } while (retval < 0 && errno == EINTR);
         if (retval > 0) {
             ofpbuf_put_uninit(&buf, retval);
@@ -701,7 +701,7 @@ parse_options(int argc, char *argv[])
         VLOG_LONG_OPTIONS,
         {NULL, 0, NULL, 0},
     };
-    char *short_options = long_options_to_short_options(long_options);
+    char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
 
     for (;;) {
         int c = getopt_long(argc, argv, short_options, long_options, NULL);

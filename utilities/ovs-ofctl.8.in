@@ -1218,16 +1218,21 @@ This is part of an already existing connection.
 This is a new connection that is related to an existing connection.
 .RE
 .
+.PP
+The following fields are data associated with the connection tracker and
+can only be matched or set after running through the connection tracker
+by using the \fBct\fR action.
+.
 .IP \fBconn_zone=\fIvalue
-Matches connection zone \fIvalue\fR exactly.  The zone is associated data with
-the connection tracker and can only be matched after running through the
-connection tracker through the \fBct\fR action.
+Matches connection zone \fIvalue\fR exactly.
 .
 .IP \fBconn_mark=\fIvalue\fR[\fB/\fImask\fR]
 Matches connection mark \fIvalue\fR either exactly or with optional
-\fImask\fR.  The mark is associated data with the connection tracker and
-can only be matched or set after running through the connection tracker
-through the \fBct\fR action.
+\fImask\fR.
+.
+.IP \fBconn_label=\fIvalue\fR[\fB/\fImask\fR]
+Matches connection label \fIvalue\fR either exactly or with optional
+\fImask\fR.
 .
 .PP
 Defining IPv6 flows (those with \fBdl_type\fR equal to 0x86dd) requires
@@ -2314,6 +2319,40 @@ In case of the \fBiremove-buckets\fR command the effect is to
 remove the in the group whose \fBbucket_id\fR is \fIid\fR.
 It is an error if there is no bucket persent group in whose \fBbucket_id\fR is
 \fIid\fR.
+
+.IP \fBselection_method\fR=\fImethod\fR
+The selection method used to select a bucket for a select group.
+This is a string of 1 to 15 bytes in length known to lower layers.
+This field is optional for \fBadd\-group\fR, \fBadd\-groups\fR and
+\fBmod\-group\fR commands on groups of type \fBselect\fR. Prohibited
+otherwise. The default value is the empty string.
+.IP
+This option will use a Netronome OpenFlow extension which is only supported
+when using Open vSwitch 2.4 and later with OpenFlow 1.5 and later.
+
+.IP \fBselection_method_param\fR=\fIparam\fR
+64-bit integer parameter to the selection method selected by the
+\fBselection_method\fR field.  The parameter's use is defined by the
+lower-layer that implements the \fBselection_method\fR.  It is optional if
+the \fBselection_method\fR field is specified as a non-empty string.
+Prohibited otherwise. The default value is zero.
+.IP
+This option will use a Netronome OpenFlow extension which is only supported
+when using Open vSwitch 2.4 and later with OpenFlow 1.5 and later.
+
+.IP \fBfields\fR=\fIparam\fR
+The field parameters to selection method selected by the
+\fBselection_method\fR field.  The syntax is described in \fBFlow Syntax\fR
+with the additional restrictions that if a value is provided it is
+treated as a wildcard mask and wildcard masks following a slash are
+prohibited. The pre-requisites of fields must be provided by any flows that
+output to the group. The use of the fields is defined by the lower-layer
+that implements the \fBselection_method\fR.  They are optional if the
+\fBselection_method\fR field is specified as a non-empty string.
+Prohibited otherwise. The default is no fields.
+.IP
+This option will use a Netronome OpenFlow extension which is only supported
+when using Open vSwitch 2.4 and later with OpenFlow 1.5 and later.
 
 .IP \fBbucket\fR=\fIbucket_parameters\fR
 The \fBadd-group\fR, \fBadd-groups\fR and \fBmod-group\fR commands

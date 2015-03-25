@@ -60,6 +60,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dirs.h \
 	lib/dpctl.c \
 	lib/dpctl.h \
+	lib/dp-packet.h \
+	lib/dp-packet.c \
 	lib/dpif-netdev.c \
 	lib/dpif-netdev.h \
 	lib/dpif-provider.h \
@@ -160,6 +162,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/ovs-atomic-pthreads.h \
 	lib/ovs-atomic-x86_64.h \
 	lib/ovs-atomic.h \
+	lib/ovs-lldp.c \
+	lib/ovs-lldp.h \
 	lib/ovs-rcu.c \
 	lib/ovs-rcu.h \
 	lib/ovs-router.h \
@@ -177,8 +181,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/ovsdb-parser.h \
 	lib/ovsdb-types.c \
 	lib/ovsdb-types.h \
-	lib/packet-dpif.c \
-	lib/packet-dpif.h \
 	lib/packets.c \
 	lib/packets.h \
 	lib/pcap-file.c \
@@ -266,8 +268,14 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/vlog.c \
 	lib/vswitch-idl.c \
 	lib/vswitch-idl.h \
-	lib/vtep-idl.c \
-	lib/vtep-idl.h
+	lib/lldp/aa-structs.h \
+	lib/lldp/lldp.c \
+	lib/lldp/lldp-const.h \
+	lib/lldp/lldp-tlv.h \
+	lib/lldp/lldpd.c \
+	lib/lldp/lldpd.h \
+	lib/lldp/lldpd-structs.c \
+	lib/lldp/lldpd-structs.h
 
 if WIN32
 lib_libopenvswitch_la_SOURCES += \
@@ -426,10 +434,7 @@ MAN_FRAGMENTS += \
 OVSIDL_BUILT += \
 	$(srcdir)/lib/vswitch-idl.c \
 	$(srcdir)/lib/vswitch-idl.h \
-	$(srcdir)/lib/vswitch-idl.ovsidl \
-	$(srcdir)/lib/vtep-idl.c \
-	$(srcdir)/lib/vtep-idl.h \
-	$(srcdir)/lib/vtep-idl.ovsidl
+	$(srcdir)/lib/vswitch-idl.ovsidl
 
 EXTRA_DIST += $(srcdir)/lib/vswitch-idl.ann
 VSWITCH_IDL_FILES = \
@@ -437,14 +442,6 @@ VSWITCH_IDL_FILES = \
 	$(srcdir)/lib/vswitch-idl.ann
 $(srcdir)/lib/vswitch-idl.ovsidl: $(VSWITCH_IDL_FILES)
 	$(AM_V_GEN)$(OVSDB_IDLC) annotate $(VSWITCH_IDL_FILES) > $@.tmp && \
-	mv $@.tmp $@
-
-EXTRA_DIST += $(srcdir)/lib/vtep-idl.ann
-VTEP_IDL_FILES = \
-	$(srcdir)/vtep/vtep.ovsschema \
-	$(srcdir)/lib/vtep-idl.ann
-$(srcdir)/lib/vtep-idl.ovsidl: $(VTEP_IDL_FILES)
-	$(AM_V_GEN)$(OVSDB_IDLC) annotate $(VTEP_IDL_FILES) > $@.tmp && \
 	mv $@.tmp $@
 
 lib/dirs.c: lib/dirs.c.in Makefile
