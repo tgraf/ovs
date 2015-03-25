@@ -257,6 +257,8 @@ in_port=4,conn_state=+trk+inv,tcp,action=3
 in_port=4,conn_state=+trk+new,tcp,action=3
 ])
 
+ovs-appctl vlog/set dpif:dbg
+
 AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
 
 dnl We set up our rules to allow the request without committing. The return
