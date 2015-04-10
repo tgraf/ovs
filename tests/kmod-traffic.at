@@ -19,7 +19,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - controller])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -98,7 +97,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - IPv4 HTTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -140,7 +138,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - IPv6 HTTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv6])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -182,7 +179,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - FTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -305,7 +301,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - zones])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -358,7 +353,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - multiple zones])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -399,7 +393,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - conn_mark])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -447,7 +440,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - conn_label])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
