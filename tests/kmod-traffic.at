@@ -19,7 +19,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - controller])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -98,7 +97,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - IPv4 HTTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -140,7 +138,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - IPv6 HTTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv6])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -182,7 +179,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - FTP])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4], [nf_conntrack_ftp])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -194,38 +190,67 @@ ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
 ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
 
 dnl Allow any traffic from ns0->ns1. Only allow nd, return traffic from ns1->ns0.
-AT_DATA([flows.txt], [dnl
+AT_DATA([flows1.txt], [dnl
 priority=1,action=drop
 priority=10,arp,action=normal
 priority=10,icmp,action=normal
 in_port=1,tcp,action=ct(alg=ftp,commit),2
-in_port=2,conn_state=-trk,tcp,action=ct(recirc)
-in_port=2,conn_state=+trk-new+est,tcp,action=1
-in_port=2,conn_state=+trk+rel,tcp,action=1
+in_port=2,tcp,conn_state=-trk,action=ct(recirc)
+in_port=2,tcp,conn_state=+trk-new+est,action=1
+in_port=2,tcp,conn_state=+trk+rel,action=1
 ])
 
-AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
+dnl Similar policy but without allowing all traffic from ns0->ns1.
+AT_DATA([flows2.txt], [dnl
+priority=1,action=drop
+priority=10,arp,action=normal
+priority=10,icmp,action=normal
+in_port=1,tcp,conn_state=-trk,action=ct(recirc)
+in_port=1,tcp,conn_state=+trk+new,action=ct(commit,alg=ftp),2
+in_port=1,tcp,conn_state=+trk+est,action=2
+in_port=2,tcp,conn_state=-trk,action=ct(recirc)
+in_port=2,tcp,conn_state=+trk+new+rel,action=ct(commit),1
+in_port=2,tcp,conn_state=+trk-new+est,action=1
+in_port=2,tcp,conn_state=+trk-new+rel,action=1
+])
 
-dnl FTP requests from p0->p1 should work fine.
+AT_CHECK([ovs-ofctl add-flows br0 flows1.txt])
+
+NETNS_DAEMONIZE([at_ns0], [[$PYTHON $srcdir/test-conntrack.py ftp]], [test-conntrack1.pid])
 NETNS_DAEMONIZE([at_ns1], [[$PYTHON $srcdir/test-conntrack.py ftp]], [test-conntrack0.pid])
 
-AT_CHECK([ip netns exec at_ns0 wget ftp://10.1.1.2 --no-passive-ftp -t 5 -T 1 --retry-connrefused -v -o wget0.log])
-
-AT_CHECK([conntrack -L 2>&1 | FORMAT_CT(10.1.1.2)], [0], [dnl
-TIME_WAIT src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> [[ASSURED]] use=1
+dnl FTP requests from p1->p0 should fail due to network failure.
+dnl Try 3 times, in 1 second intervals.
+AT_CHECK([ip netns exec at_ns1 wget ftp://10.1.1.1 --no-passive-ftp  -t 3 -T 1 -v -o wget1.log], [4])
+AT_CHECK([conntrack -L 2>&1 | FORMAT_CT(10.1.1.1)], [0], [dnl
 ])
 
-dnl FTP requests from p1->p0 should fail due to network failure.
-dnl Try 5 times, in 1 second intervals.
-NETNS_DAEMONIZE([at_ns0], [[$PYTHON $srcdir/test-conntrack.py ftp]], [test-conntrack1.pid])
-AT_CHECK([ip netns exec at_ns1 wget ftp://10.1.1.1 --no-passive-ftp  -t 5 -T 1 -v -o wget1.log], [4])
+dnl FTP requests from p0->p1 should work fine.
+AT_CHECK([ip netns exec at_ns0 wget ftp://10.1.1.2 --no-passive-ftp -t 3 -T 1 --retry-connrefused -v -o wget0.log])
 
+dnl I think that the first of the below connections is because we don't wait long enough before the above command...
+AT_CHECK([conntrack -L 2>&1 | FORMAT_CT(10.1.1.2) | grep -v "FIN"], [0], [dnl
+TIME_WAIT src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> [[ASSURED]] mark=0 use=1
+])
+
+dnl Try the second set of flows.
+conntrack -F
+AT_CHECK([ovs-ofctl del-flows br0])
+AT_CHECK([ovs-ofctl add-flows br0 flows2.txt])
+
+dnl FTP requests from p1->p0 should fail due to network failure.
+dnl Try 3 times, in 1 second intervals.
+AT_CHECK([ip netns exec at_ns1 wget ftp://10.1.1.1 --no-passive-ftp  -t 3 -T 1 -v -o wget1.log], [4])
 AT_CHECK([conntrack -L 2>&1 | FORMAT_CT(10.1.1.1)], [0], [dnl
-SYN_RECV src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> use=1
-SYN_RECV src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> use=1
-SYN_RECV src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> use=1
-SYN_RECV src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> use=1
-SYN_RECV src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> use=1
+])
+
+dnl FTP requests from p0->p1 should work fine.
+AT_CHECK([ip netns exec at_ns0 wget ftp://10.1.1.2 --no-passive-ftp -t 3 -T 1 --retry-connrefused -v -o wget0.log])
+
+dnl I think that the first of the below connections is because we don't wait long enough before the above command...
+AT_CHECK([conntrack -L 2>&1 | FORMAT_CT(10.1.1.2) | grep -v "FIN"], [0], [dnl
+TIME_WAIT src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> [[ASSURED]] mark=0 use=2
+TIME_WAIT src=10.1.1.2 dst=10.1.1.1 sport=<cleared> dport=<cleared> src=10.1.1.1 dst=10.1.1.2 sport=<cleared> dport=<cleared> [[ASSURED]] mark=0 use=1
 ])
 
 OVS_KMOD_VSWITCHD_STOP
@@ -257,6 +282,8 @@ in_port=4,conn_state=+trk+inv,tcp,action=3
 in_port=4,conn_state=+trk+new,tcp,action=3
 ])
 
+ovs-appctl vlog/set dpif:dbg
+
 AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
 
 dnl We set up our rules to allow the request without committing. The return
@@ -274,7 +301,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - zones])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -327,7 +353,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - multiple zones])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -368,7 +393,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - conn_mark])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 
@@ -416,7 +440,6 @@ AT_CLEANUP
 
 AT_SETUP([conntrack - conn_label])
 AT_SKIP_IF([test $HAVE_PYTHON = no])
-LOAD_MODULES([nf_conntrack_ipv4])
 OVS_KMOD_VSWITCHD_START(
    [set-fail-mode br0 standalone -- ])
 

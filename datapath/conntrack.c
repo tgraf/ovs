@@ -23,7 +23,7 @@
 #include <linux/openvswitch.h>
 
 #include "datapath.h"
-#include "ovs_conntrack.h"
+#include "conntrack.h"
 #include "flow.h"
 #include "flow_netlink.h"
 
@@ -37,34 +37,19 @@ struct ovs_conntrack_info {
 	struct nf_conn *ct;
 	u32 flags;
 	u16 zone;
+	u16 family;
 };
 
-/* Determine whether skb->nfct is equal to the result of conntrack lookup. */
-static bool skb_nfct_cached(const struct net *net, const struct sk_buff *skb,
-			    const struct ovs_conntrack_info *info)
+static u16 key_to_nfproto(const struct sw_flow_key *key)
 {
-	enum ip_conntrack_info ctinfo;
-	struct nf_conn *ct;
-
-	ct = nf_ct_get(skb, &ctinfo);
-	if (!ct)
-		return false;
-	WARN(!net_eq(net, read_pnet(&ct->ct_net)),
-	     "Packet has conntrack association from different namespace\n");
-	if (!net_eq(net, read_pnet(&ct->ct_net))) {
-		return false;
+	switch (ntohs(key->eth.type)) {
+	case ETH_P_IP:
+		return NFPROTO_IPV4;
+	case ETH_P_IPV6:
+		return NFPROTO_IPV6;
+	default:
+		return NFPROTO_UNSPEC;
 	}
-	if (info->zone != nf_ct_zone(ct))
-		return false;
-	if (info->helper) {
-		struct nf_conn_help *help;
-
-		help = nf_ct_ext_find(ct, NF_CT_EXT_HELPER);
-		if (help && help->helper != info->helper)
-			return false;
-	}
-
-	return true;
 }
 
 static struct net *ovs_get_net(const struct sk_buff *skb)
@@ -79,13 +64,9 @@ static struct net *ovs_get_net(const struct sk_buff *skb)
 }
 
 /* Map SKB connection state into the values used by flow definition. */
-u8 ovs_ct_get_state(const struct sk_buff *skb)
+static u8 ovs_ct_get_state__(enum ip_conntrack_info ctinfo)
 {
-	enum ip_conntrack_info ctinfo;
 	u8 cstate = OVS_CS_F_TRACKED;
-
-	if (!nf_ct_get(skb, &ctinfo))
-		return 0;
 
 	switch (ctinfo) {
 	case IP_CT_ESTABLISHED_REPLY:
@@ -115,6 +96,15 @@ u8 ovs_ct_get_state(const struct sk_buff *skb)
 	}
 
 	return cstate;
+}
+
+u8 ovs_ct_get_state(const struct sk_buff *skb)
+{
+	enum ip_conntrack_info ctinfo;
+
+	if (!nf_ct_get(skb, &ctinfo))
+		return 0;
+	return ovs_ct_get_state__(ctinfo);
 }
 
 u16 ovs_ct_get_zone(const struct sk_buff *skb)
@@ -160,24 +150,110 @@ void ovs_ct_get_label(const struct sk_buff *skb,
 	}
 }
 
-bool ovs_ct_state_valid(const struct sw_flow_key *key)
+static bool ovs_ct_state_valid__(u8 state)
 {
-	return (key->phy.conn_state &&
-		!(key->phy.conn_state & OVS_CS_F_INVALID));
+	return (state && !(state & OVS_CS_F_INVALID));
 }
 
-static int ovs_ct_lookup__(struct net *net, struct sw_flow_key *key,
+bool ovs_ct_state_valid(const struct sw_flow_key *key)
+{
+	return ovs_ct_state_valid__(key->conn.state);
+}
+
+/* 'skb' should already be pulled to nh_ofs. */
+int ovs_ct_helper(struct sk_buff *skb, u16 proto)
+{
+	const struct nf_conntrack_helper *helper;
+	const struct nf_conn_help *help;
+	enum ip_conntrack_info ctinfo;
+	unsigned int protoff;
+	struct nf_conn *ct;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct || ctinfo == IP_CT_RELATED_REPLY)
+		return NF_ACCEPT;
+
+	help = nfct_help(ct);
+	if (!help)
+		return NF_ACCEPT;
+
+	helper = rcu_dereference(help->helper);
+	if (!helper)
+		return NF_ACCEPT;
+
+	/* XXX: Does OVS track this information already? */
+	/* I mean, is something like skb->transport_header good enough? */
+	switch (proto) {
+	case NFPROTO_IPV4:
+		protoff = ip_hdrlen(skb);
+		break;
+	case NFPROTO_IPV6: {
+		u8 nexthdr = ipv6_hdr(skb)->nexthdr;
+		__be16 frag_off;
+
+		protoff = ipv6_skip_exthdr(skb, sizeof(struct ipv6hdr),
+					   &nexthdr, &frag_off);
+		if (protoff < 0 || (frag_off & htons(~0x7)) != 0) {
+			pr_debug("proto header not found\n");
+			return NF_ACCEPT;
+		}
+		break;
+	}
+	default:
+		return NF_ACCEPT;
+	}
+
+	return helper->help(skb, protoff, ct, ctinfo);
+}
+
+static struct nf_conntrack_expect *
+ovs_ct_expect_find(struct net *net, u16 zone, u16 proto,
+		   const struct sk_buff *skb)
+{
+	struct nf_conntrack_tuple tuple;
+
+	if (!nf_ct_get_tuplepr(skb, skb_network_offset(skb), proto, &tuple))
+		return NULL;
+	return __nf_ct_expect_find(net, zone, &tuple);
+}
+
+/* Determine whether skb->nfct is equal to the result of conntrack lookup. */
+static bool skb_nfct_cached(const struct net *net, const struct sk_buff *skb,
+			    const struct ovs_conntrack_info *info)
+{
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct)
+		return false;
+	if (!net_eq(net, read_pnet(&ct->ct_net))) {
+		WARN(true, "skb->nfct associated with different namespace\n");
+		return false;
+	}
+	if (info->zone != nf_ct_zone(ct))
+		return false;
+	if (info->helper) {
+		struct nf_conn_help *help;
+
+		help = nf_ct_ext_find(ct, NF_CT_EXT_HELPER);
+		if (help && help->helper != info->helper)
+			return false;
+	}
+
+	return true;
+}
+
+static int ovs_ct_lookup__(struct net *net, const struct sw_flow_key *key,
 			   const struct ovs_conntrack_info *info,
 			   struct sk_buff *skb)
 {
-	struct nf_conn *tmpl = info->ct;
-
 	/* If we are recirculating packets to match on conntrack fields and
 	 * committing with a separate conntrack action,  then we don't need to
 	 * actually run the packet through conntrack twice unless it's for a
 	 * different zone. */
 	if (!skb_nfct_cached(net, skb, info)) {
-		uint8_t pf;
+		struct nf_conn *tmpl = info->ct;
 
 		/* Associate skb with specified zone. */
 		if (tmpl) {
@@ -188,65 +264,83 @@ static int ovs_ct_lookup__(struct net *net, struct sw_flow_key *key,
 			skb->nfctinfo = IP_CT_NEW;
 		}
 
-		pf = key->eth.type == htons(ETH_P_IP) ? PF_INET
-		   : key->eth.type == htons(ETH_P_IPV6) ? PF_INET6
-		   : PF_UNSPEC;
-		if (nf_conntrack_in(net, pf, NF_INET_PRE_ROUTING, skb) !=
-		    NF_ACCEPT)
-			return -ENOENT;
+		return nf_conntrack_in(net, info->family, NF_INET_PRE_ROUTING,
+				       skb);
 	}
 
-	/* XXX This probably doesn't need doing if it's cached. */
-	if (skb->nfct) {
-		key->phy.conn_state = ovs_ct_get_state(skb);
-		key->phy.conn_zone = ovs_ct_get_zone(skb);
+	return NF_ACCEPT;
+}
+
+/* Lookup connection and read fields into key. */
+static int ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
+			 const struct ovs_conntrack_info *info,
+			 struct sk_buff *skb)
+{
+	struct nf_conntrack_expect *exp;
+	struct nf_conn *ct;
+
+	exp = ovs_ct_expect_find(net, info->zone, info->family, skb);
+	if (exp) {
+		ct = exp->master;
+		key->conn.state = OVS_CS_F_TRACKED | OVS_CS_F_NEW |
+				  OVS_CS_F_RELATED;
 	} else {
-		key->phy.conn_state = OVS_CS_F_TRACKED | OVS_CS_F_INVALID;
-		key->phy.conn_zone = info->zone;
+		enum ip_conntrack_info ctinfo;
+
+		if (ovs_ct_lookup__(net, key, info, skb) != NF_ACCEPT)
+			return -ENOENT;
+
+		ct = nf_ct_get(skb, &ctinfo);
+		if (ct) {
+			key->conn.state = ovs_ct_get_state__(ctinfo);
+			if (ct->master) /* XXX */
+				key->conn.state |= OVS_CS_F_RELATED;
+		} else {
+			key->conn.state = OVS_CS_F_TRACKED | OVS_CS_F_INVALID;
+		}
 	}
-	key->phy.conn_mark = ovs_ct_get_mark(skb);
-	ovs_ct_get_label(skb, &key->phy.conn_label);
+
+	key->conn.zone = ct ? nf_ct_zone(ct) : info->zone;
+	key->conn.mark = ovs_ct_get_mark(skb);
+	ovs_ct_get_label(skb, &key->conn.label);
+
+	if (ovs_ct_helper(skb, info->family) != NF_ACCEPT)
+		return -EINVAL;
 
 	return 0;
 }
 
-static int ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
+/* Lookup connection and confirm if unconfirmed. */
+static int ovs_ct_commit(struct net *net, const struct sw_flow_key *key,
+			 const struct ovs_conntrack_info *info,
 			 struct sk_buff *skb)
 {
-	struct ovs_conntrack_info info;
-	struct nf_conntrack_tuple t;
-	struct nf_conn *tmpl = NULL;
-	u16 zone;
-	int err;
+	u8 state;
 
-	zone = key->phy.conn_zone;
-	if (zone != NF_CT_DEFAULT_ZONE) {
-		memset(&t, 0, sizeof(t));
-		tmpl = nf_conntrack_alloc(net, zone, &t, &t, GFP_KERNEL);
-		if (IS_ERR(tmpl))
-			return PTR_ERR(tmpl);
-		/* XXX The other place does some bit twiddling to ensure this is treated as a template */
-		__set_bit(IPS_TEMPLATE_BIT, &tmpl->status);
-		__set_bit(IPS_CONFIRMED_BIT, &tmpl->status);
-		nf_conntrack_get(&tmpl->ct_general);
+	state = key->conn.state;
+	if (key->conn.zone == info->zone &&
+	    ((state & OVS_CS_F_TRACKED) && !(state & OVS_CS_F_NEW))) {
+		/* Previous lookup has shown that this connection is already
+		 * tracked and committed. Skip committing. */
+		return 0;
 	}
 
-	info.ct = tmpl;
-	info.flags = 0;
-	info.zone = zone;
-	info.helper = NULL;
-	err = ovs_ct_lookup__(net, key, &info, skb);
-	if (tmpl && skb->nfct == &tmpl->ct_general)
-		nf_ct_put(tmpl);
+	if (ovs_ct_lookup__(net, key, info, skb) != NF_ACCEPT)
+		return -ENOENT;
+	if (ovs_ct_helper(skb, info->family) != NF_ACCEPT)
+		return -EINVAL;
+	if (nf_conntrack_confirm(skb) != NF_ACCEPT)
+		return -EINVAL;
 
-	return err;
+	return 0;
 }
 
 int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 		   const struct ovs_conntrack_info *info)
 {
 	struct net *net;
-	int nh_ofs, err;
+	int nh_ofs;
+	int err;
 
 	net = ovs_get_net(skb);
 	if (IS_ERR(net))
@@ -256,44 +350,14 @@ int ovs_ct_execute(struct sk_buff *skb, struct sw_flow_key *key,
 	nh_ofs = skb_network_offset(skb);
 	skb_pull(skb, nh_ofs);
 
-	err = -EINVAL;
-	if (ovs_ct_lookup__(net, key, info, skb))
-		goto err_push_skb;
+	if (info->flags & OVS_CT_F_COMMIT)
+		err = ovs_ct_commit(net, key, info, skb);
+	else
+		err = ovs_ct_lookup(net, key, info, skb);
 
-	if (info->flags & OVS_CT_F_COMMIT && ovs_ct_state_valid(key) &&
-	    nf_conntrack_confirm(skb) != NF_ACCEPT)
-		goto err_push_skb;
-
-	err = 0;
-err_push_skb:
 	/* Point back to L2, which OVS expects. */
 	skb_push(skb, nh_ofs);
 	return err;
-}
-
-/* If conntrack is performed on a packet which is subsequently sent to
- * userspace, then on execute the returned packet won't have conntrack
- * available in the skb. Initialize it if it is needed.
- *
- * Typically this should boil down to a no-op.
- */
-static int reinit_skb_nfct(struct sk_buff *skb, struct sw_flow_key *key)
-{
-	struct net *net;
-	int err;
-
-	if (!ovs_ct_state_valid(key))
-		return -EINVAL;
-
-	net = ovs_get_net(skb);
-	if (IS_ERR(net))
-		return PTR_ERR(net);
-
-	err = ovs_ct_lookup(net, key, skb);
-	if (err)
-		return err;
-
-	return 0;
 }
 
 int ovs_ct_set_mark(struct sk_buff *skb, struct sw_flow_key *key,
@@ -303,12 +367,8 @@ int ovs_ct_set_mark(struct sk_buff *skb, struct sw_flow_key *key,
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct;
 	u32 new_mark;
-	int err;
 
-	err = reinit_skb_nfct(skb, key);
-	if (err)
-		return err;
-
+	/* This must happen directly after lookup/commit. */
 	ct = nf_ct_get(skb, &ctinfo);
 	if (!ct)
 		return -EINVAL;
@@ -317,7 +377,7 @@ int ovs_ct_set_mark(struct sk_buff *skb, struct sw_flow_key *key,
 	if (ct->mark != new_mark) {
 		ct->mark = new_mark;
 		nf_conntrack_event_cache(IPCT_MARK, ct);
-		key->phy.conn_mark = conn_mark;
+		key->conn.mark = conn_mark; /* XXX: Remove */
 	}
 
 	return 0;
@@ -336,10 +396,7 @@ int ovs_ct_set_label(struct sk_buff *skb, struct sw_flow_key *key,
 	struct nf_conn *ct;
 	int err;
 
-	err = reinit_skb_nfct(skb, key);
-	if (err)
-		return err;
-
+	/* This must happen directly after lookup/commit. */
 	ct = nf_ct_get(skb, &ctinfo);
 	if (!ct)
 		return -EINVAL;
@@ -358,7 +415,8 @@ int ovs_ct_set_label(struct sk_buff *skb, struct sw_flow_key *key,
 	if (err)
 		return err;
 
-	ovs_ct_get_label(skb, &key->phy.conn_label);
+	/* XXX: Remove */
+	ovs_ct_get_label(skb, &key->conn.label);
 	return 0;
 #else
 	return -ENOTSUPP;
@@ -385,25 +443,13 @@ int ovs_ct_verify(u64 attrs)
 	return err;
 }
 
-static u16 get_family(const struct sw_flow_key *key)
-{
-	switch (ntohs(key->eth.type)) {
-	case ETH_P_IP:
-		return AF_INET;
-	case ETH_P_IPV6:
-		return AF_INET6;
-	default:
-		return 0;
-	}
-}
-
 static int ovs_ct_add_helper(struct ovs_conntrack_info *info, const char *name,
 			     const struct sw_flow_key *key, bool log)
 {
 	struct nf_conntrack_helper *helper;
 	struct nf_conn_help *help;
 
-	helper = nf_conntrack_helper_try_module_get(name, get_family(key),
+	helper = nf_conntrack_helper_try_module_get(name, info->family,
 						    key->ip.proto);
 	if (!helper) {
 		OVS_NLERR(log, "Unknown helper \"%s\"", name);
@@ -430,20 +476,11 @@ static const struct ovs_ct_len_tbl ovs_ct_attr_lens[OVS_CT_ATTR_MAX + 1] = {
 				    .maxlen = NF_CT_HELPER_NAME_LEN }
 };
 
-int ovs_ct_copy_action(struct net *net, const struct nlattr *attr,
-		       const struct sw_flow_key *key,
-		       struct sw_flow_actions **sfa,  bool log)
+static int parse_ct(const struct nlattr *attr, struct ovs_conntrack_info *info,
+		    const char **helper, bool log)
 {
-	struct ovs_conntrack_info ct_info;
-	const char *helper = NULL;
 	struct nlattr *a;
-	int rem, err;
-
-	if (key->eth.type != htons(ETH_P_IP) &&
-	    key->eth.type != htons(ETH_P_IPV6))
-		return -EINVAL;
-
-	memset(&ct_info, 0, sizeof(ct_info));
+	int rem;
 
 	nla_for_each_nested(a, attr, rem) {
 		int type = nla_type(a);
@@ -466,15 +503,15 @@ int ovs_ct_copy_action(struct net *net, const struct nlattr *attr,
 		switch (type) {
 #ifdef CONFIG_NF_CONNTRACK_ZONES
 		case OVS_CT_ATTR_ZONE:
-			ct_info.zone = nla_get_u16(a);
+			info->zone = nla_get_u16(a);
 			break;
 #endif
 		case OVS_CT_ATTR_FLAGS:
-			ct_info.flags = nla_get_u32(a);
+			info->flags = nla_get_u32(a);
 			break;
 		case OVS_CT_ATTR_HELPER:
-			helper = nla_data(a);
-			if (!memchr(helper, '\0', nla_len(a))) {
+			*helper = nla_data(a);
+			if (!memchr(*helper, '\0', nla_len(a))) {
 				OVS_NLERR(log, "Invalid conntrack helper");
 				return -EINVAL;
 			}
@@ -490,6 +527,29 @@ int ovs_ct_copy_action(struct net *net, const struct nlattr *attr,
 		OVS_NLERR(log, "Conntrack attr has %d unknown bytes", rem);
 		return -EINVAL;
 	}
+
+	return 0;
+}
+
+int ovs_ct_copy_action(struct net *net, const struct nlattr *attr,
+		       const struct sw_flow_key *key,
+		       struct sw_flow_actions **sfa,  bool log)
+{
+	struct ovs_conntrack_info ct_info;
+	const char *helper = NULL;
+	u16 family;
+	int err;
+
+	family = key_to_nfproto(key);
+	if (family == NFPROTO_UNSPEC)
+		return -EINVAL;
+
+	memset(&ct_info, 0, sizeof(ct_info));
+	ct_info.family = family;
+
+	err = parse_ct(attr, &ct_info, &helper, log);
+	if (err)
+		return err;
 
 	if (ct_info.zone || helper) {
 		struct nf_conntrack_tuple t;
@@ -509,8 +569,12 @@ int ovs_ct_copy_action(struct net *net, const struct nlattr *attr,
 		nf_conntrack_tmpl_insert(net, ct_info.ct);
 	}
 
-	return ovs_nla_add_action(sfa, OVS_ACTION_ATTR_CT, &ct_info,
-				  sizeof(ct_info), log);
+	err = ovs_nla_add_action(sfa, OVS_ACTION_ATTR_CT, &ct_info,
+				 sizeof(ct_info), log);
+	if (err)
+		goto err_free_ct;
+
+	return 0;
 err_free_ct:
 	nf_conntrack_free(ct_info.ct);
 	return err;
@@ -551,14 +615,12 @@ void ovs_ct_free_acts(struct sw_flow_actions *sf_acts)
 
 		for (a = sf_acts->actions, rem = len; rem > 0;
 		     a = nla_next(a, &rem)) {
-			switch (nla_type(a)) {
-			case OVS_ACTION_ATTR_CT:
+			if (nla_type(a) == OVS_ACTION_ATTR_CT) {
 				ct_info = nla_data(a);
 				if (ct_info->helper)
 					module_put(ct_info->helper->me);
 				if (ct_info->ct)
 					nf_ct_put(ct_info->ct);
-				break;
 			}
 		}
 	}
@@ -605,16 +667,21 @@ exit:
 	return NULL;
 }
 
-void ovs_ct_init(struct net *net, struct ovs_net *ovs_net)
+void ovs_ct_init(struct net *net, struct ovs_ct_perdp_data *data)
 {
-	ovs_net->ct_net.xt_label = load_connlabel(net);
+	data->xt_v4 = !nf_ct_l3proto_try_module_get(PF_INET);
+	data->xt_v6 = !nf_ct_l3proto_try_module_get(PF_INET6);
+	data->xt_label = load_connlabel(net);
 }
 
-void ovs_ct_exit(struct net *net, struct ovs_net *ovs_net)
+void ovs_ct_exit(struct net *net, struct ovs_ct_perdp_data *data)
 {
-	const struct xt_match *match = ovs_net->ct_net.xt_label;
-
-	if (match) {
+	if (data->xt_v4)
+		nf_ct_l3proto_module_put(PF_INET);
+	if (data->xt_v6)
+		nf_ct_l3proto_module_put(PF_INET6);
+	if (data->xt_label) {
+		const struct xt_match *match = data->xt_label;
 		struct xt_mtdtor_param mtd;
 
 		mtd.net = net;

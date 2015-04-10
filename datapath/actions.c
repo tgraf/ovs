@@ -37,7 +37,7 @@
 
 #include "datapath.h"
 #include "gso.h"
-#include "ovs_conntrack.h"
+#include "conntrack.h"
 #include "vlan.h"
 #include "vport.h"
 

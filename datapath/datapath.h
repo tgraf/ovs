@@ -27,7 +27,7 @@
 #include <linux/u64_stats_sync.h>
 
 #include "compat.h"
-#include "ovs_conntrack.h"
+#include "conntrack.h"
 #include "flow.h"
 #include "flow_table.h"
 #include "vlan.h"
@@ -93,6 +93,8 @@ struct datapath {
 #endif
 
 	u32 user_features;
+
+	struct ovs_ct_perdp_data ct;
 };
 
 /**
@@ -135,7 +137,6 @@ struct ovs_net {
 	struct list_head dps;
 	struct work_struct dp_notify_work;
 	struct vport_net vport_net;
-	struct ovs_ct_net ct_net;
 };
 
 extern int ovs_net_id;

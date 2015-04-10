@@ -1547,6 +1547,9 @@ static int ovs_dp_cmd_new(struct sk_buff *skb, struct genl_info *info)
 
 	ovs_dp_change(dp, a);
 
+	/* Set up conntrack dependencies. */
+	ovs_ct_init(read_pnet(&dp->net), &dp->ct);
+
 	/* So far only local changes have been made, now need the lock. */
 	ovs_lock();
 
@@ -1582,6 +1585,7 @@ static int ovs_dp_cmd_new(struct sk_buff *skb, struct genl_info *info)
 err_destroy_ports_array:
 	ovs_unlock();
 	kfree(dp->ports);
+        ovs_ct_exit(read_pnet(&dp->net), &dp->ct);
 err_destroy_percpu:
 	free_percpu(dp->stats_percpu);
 err_destroy_table:
@@ -1615,6 +1619,8 @@ static void __dp_destroy(struct datapath *dp)
 	 * all ports in datapath are destroyed first before freeing datapath.
 	 */
 	ovs_dp_detach_port(ovs_vport_ovsl(dp, OVSP_LOCAL));
+
+	ovs_ct_exit(read_pnet(&dp->net), &dp->ct);
 
 	/* RCU destroy the flow table */
 	call_rcu(&dp->rcu, destroy_dp_rcu);
@@ -2195,7 +2201,6 @@ static int __net_init ovs_init_net(struct net *net)
 
 	INIT_LIST_HEAD(&ovs_net->dps);
 	INIT_WORK(&ovs_net->dp_notify_work, ovs_dp_notify_wq);
-	ovs_ct_init(net, ovs_net);
 	return 0;
 }
 
@@ -2233,7 +2238,6 @@ static void __net_exit ovs_exit_net(struct net *dnet)
 	struct net *net;
 	LIST_HEAD(head);
 
-	ovs_ct_exit(dnet, ovs_net);
 	ovs_lock();
 	list_for_each_entry_safe(dp, dp_next, &ovs_net->dps, list_node)
 		__dp_destroy(dp);

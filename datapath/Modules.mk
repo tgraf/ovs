@@ -8,12 +8,12 @@ dist_modules = $(both_modules)	# Modules to distribute
 
 openvswitch_sources = \
 	actions.c \
+	conntrack.c \
 	datapath.c \
 	dp_notify.c \
 	flow.c \
 	flow_netlink.c \
 	flow_table.c \
-	ovs_conntrack.c \
 	vport.c \
 	vport-geneve.c \
 	vport-gre.c \
@@ -24,11 +24,11 @@ openvswitch_sources = \
 
 openvswitch_headers = \
 	compat.h \
+	conntrack.h \
 	datapath.h \
 	flow.h \
 	flow_netlink.h \
 	flow_table.h \
-	ovs_conntrack.h \
 	vlan.h \
 	vport.h \
 	vport-internal_dev.h \

@@ -49,7 +49,7 @@
 #include "datapath.h"
 #include "flow.h"
 #include "flow_netlink.h"
-#include "ovs_conntrack.h"
+#include "conntrack.h"
 #include "vport-vxlan.h"
 
 struct ovs_len_tbl {
@@ -782,26 +782,26 @@ static int metadata_from_nlattrs(struct sw_flow_match *match,  u64 *attrs,
 	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_STATE)) {
 		uint8_t conn_state = nla_get_u8(a[OVS_KEY_ATTR_CONN_STATE]);
 
-		SW_FLOW_KEY_PUT(match, phy.conn_state, conn_state, is_mask);
+		SW_FLOW_KEY_PUT(match, conn.state, conn_state, is_mask);
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_STATE);
 	}
 	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_ZONE)) {
 		uint16_t conn_zone = nla_get_u16(a[OVS_KEY_ATTR_CONN_ZONE]);
 
-		SW_FLOW_KEY_PUT(match, phy.conn_zone, conn_zone, is_mask);
+		SW_FLOW_KEY_PUT(match, conn.zone, conn_zone, is_mask);
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_ZONE);
 	}
 	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_MARK)) {
 		uint32_t mark = nla_get_u32(a[OVS_KEY_ATTR_CONN_MARK]);
 
-		SW_FLOW_KEY_PUT(match, phy.conn_mark, mark, is_mask);
+		SW_FLOW_KEY_PUT(match, conn.mark, mark, is_mask);
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_MARK);
 	}
 	if (*attrs & (1ULL << OVS_KEY_ATTR_CONN_LABEL)) {
 		const struct ovs_key_conn_label *cl;
 
 		cl = nla_data(a[OVS_KEY_ATTR_CONN_LABEL]);
-		SW_FLOW_KEY_MEMCPY(match, phy.conn_label, cl->conn_label,
+		SW_FLOW_KEY_MEMCPY(match, conn.label, cl->conn_label,
 				   sizeof(*cl), is_mask);
 		*attrs &= ~(1ULL << OVS_KEY_ATTR_CONN_LABEL);
 	}
@@ -1351,17 +1351,17 @@ static int __ovs_nla_put_key(const struct sw_flow_key *swkey,
 	if (nla_put_u32(skb, OVS_KEY_ATTR_SKB_MARK, output->phy.skb_mark))
 		goto nla_put_failure;
 
-	if (nla_put_u8(skb, OVS_KEY_ATTR_CONN_STATE, output->phy.conn_state))
+	if (nla_put_u8(skb, OVS_KEY_ATTR_CONN_STATE, output->conn.state))
 		goto nla_put_failure;
 
-	if (nla_put_u16(skb, OVS_KEY_ATTR_CONN_ZONE, output->phy.conn_zone))
+	if (nla_put_u16(skb, OVS_KEY_ATTR_CONN_ZONE, output->conn.zone))
 		goto nla_put_failure;
 
-	if (nla_put_u32(skb, OVS_KEY_ATTR_CONN_MARK, output->phy.conn_mark))
+	if (nla_put_u32(skb, OVS_KEY_ATTR_CONN_MARK, output->conn.mark))
 		goto nla_put_failure;
 
 	if (nla_put(skb, OVS_KEY_ATTR_CONN_LABEL,
-		    sizeof(output->phy.conn_label), &output->phy.conn_label))
+		    sizeof(output->conn.label), &output->conn.label))
 		goto nla_put_failure;
 
 	nla = nla_reserve(skb, OVS_KEY_ATTR_ETHERNET, sizeof(*eth_key));

@@ -23,13 +23,15 @@ struct sw_flow_actions;
 struct ovs_conntrack_info;
 struct ovs_key_conn_label;
 
-struct ovs_ct_net {
+struct ovs_ct_perdp_data {
+	bool xt_v4;
+	bool xt_v6;
 	struct xt_match *xt_label;
 };
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(3,9,0)
-void ovs_ct_init(struct net *, struct ovs_net *);
-void ovs_ct_exit(struct net *, struct ovs_net *);
+void ovs_ct_init(struct net *, struct ovs_ct_perdp_data *data);
+void ovs_ct_exit(struct net *, struct ovs_ct_perdp_data *data);
 int ovs_ct_verify(u64 attrs);
 int ovs_ct_copy_action(struct net *, const struct nlattr *,
 		       const struct sw_flow_key *, struct sw_flow_actions **,
@@ -54,8 +56,13 @@ void ovs_ct_free_acts(struct sw_flow_actions *sf_acts);
 #else
 #include <linux/errno.h>
 
-static inline void ovs_ct_init(struct net *net, struct ovs_net *ovs_net) { }
-static inline void ovs_ct_exit(struct net *net, struct ovs_net *ovs_net) { }
+static inline void ovs_ct_init(struct net *net, struct ovs_ct_perdp_data *data)
+{
+}
+
+static inline void ovs_ct_exit(struct net *net, struct ovs_ct_perdp_data *data)
+{
+}
 
 static inline int ovs_ct_verify(u64 attrs)
 {
@@ -119,4 +126,4 @@ static inline int ovs_ct_set_label(struct sk_buff *skb,
 
 static inline void ovs_ct_free_acts(struct sw_flow_actions *sf_acts) { }
 #endif
-#endif /* ovs_conntrack.h */
+#endif /* conntrack.h */
