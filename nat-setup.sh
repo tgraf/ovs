@@ -41,7 +41,7 @@ function tenant_to_nat_gw()
 	MAC=$(ip netns exec $3 ip link show $3 | grep ether | awk '{print $2}')
 
 	ovs-ofctl add-flow $BR "priority=100,in_port=$1,actions=load:$2->NXM_NX_PKT_MARK[], \
-							mod_dl_dst:$MAC,mod_dl_src:$GW_MAC,output:$(get_ofport $3)"
+				mod_dl_dst:$MAC,mod_dl_src:$GW_MAC,output:$(get_ofport $3)"
 			
 }
 
@@ -50,10 +50,10 @@ function do_l3_into_tenant()
 	local MAC=$(ip netns exec $1 ip link show $2 | grep ether | awk '{print $2}')
 
 	ovs-ofctl add-flow $BR "table=2,priority=100,ip,nw_dst=$3,actions= \
-							mod_dl_dst:$MAC, \
-							dec_ttl, \
-							mod_dl_src:$GW_MAC, \
-							output:$(get_ofport $2)"
+				mod_dl_dst:$MAC, \
+				dec_ttl, \
+				mod_dl_src:$GW_MAC, \
+				output:$(get_ofport $2)"
 }
 
 # NETNS PORT-NAME PREFIX MARK-VALUE NAT_GW
@@ -103,14 +103,14 @@ function mac2hex()
 function arp_responder()
 {
 	ovs-ofctl add-flow $BR "arp, arp_op=1, arp_tpa=$1, \
-							actions=move:NXM_OF_ETH_SRC[]->NXM_OF_ETH_DST[], \
-							mod_dl_src:$2, \
-							load:2->NXM_OF_ARP_OP[], \
-							move:NXM_NX_ARP_SHA[]->NXM_NX_ARP_THA[], \
-							load:$(mac2hex $2)->NXM_NX_ARP_SHA[], \
-							move:NXM_OF_ARP_SPA[]->NXM_OF_ARP_TPA[], \
-							load:$(ip2hex $1)->NXM_OF_ARP_SPA[], \
-							in_port"
+				actions=move:NXM_OF_ETH_SRC[]->NXM_OF_ETH_DST[], \
+				mod_dl_src:$2, \
+				load:2->NXM_OF_ARP_OP[], \
+				move:NXM_NX_ARP_SHA[]->NXM_NX_ARP_THA[], \
+				load:$(mac2hex $2)->NXM_NX_ARP_SHA[], \
+				move:NXM_OF_ARP_SPA[]->NXM_OF_ARP_TPA[], \
+				load:$(ip2hex $1)->NXM_OF_ARP_SPA[], \
+				in_port"
 }
 
 ################################################################################
