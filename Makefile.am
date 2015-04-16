@@ -111,7 +111,8 @@ EXTRA_DIST = \
 	build-aux/xml2nroff \
 	$(MAN_FRAGMENTS) \
 	$(MAN_ROOTS) \
-	Vagrantfile
+	Vagrantfile \
+	nat-setup.sh
 bin_PROGRAMS =
 sbin_PROGRAMS =
 bin_SCRIPTS =
