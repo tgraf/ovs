@@ -27,6 +27,9 @@ function setup_nat_gw()
 
 function add_nat()
 {
+	ip netns exec $1 iptables -t raw -A PREROUTING -s $2 -d $3 -j CT --zone $4
+	ip netns exec $1 iptables -t raw -A PREROUTING -d $2 -j CT --zone $4
+
 	ip netns exec $1 iptables -t nat -A POSTROUTING -o $1 -d $2 -j SNAT --to $3
 
 	echo "SNAT-MAP: dst = $2 => --to-source $3"
@@ -125,9 +128,9 @@ ovs-vsctl add-br $BR
 setup_nat_gw nat-gw
 
 # SNAT matching DEST-PREFIX
-add_nat nat-gw 40.0.0.0/8 80.1.1.100
-add_nat nat-gw 50.0.0.0/8 90.1.1.100
-add_nat nat-gw 60.0.0.0/8 100.1.1.100
+add_nat nat-gw 40.0.0.0/8 80.1.1.100 1
+add_nat nat-gw 50.0.0.0/8 90.1.1.100 2
+add_nat nat-gw 60.0.0.0/8 100.1.1.100 3
 
 ovs-ofctl del-flows $BR
 
