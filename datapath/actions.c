@@ -731,6 +731,8 @@ static int execute_recirc(struct datapath *dp, struct sk_buff *skb,
 {
 	struct deferred_action *da;
 
+	printk("state start of recirc: %u\n", ovs_ct_get_state(skb));
+
 	if (!is_flow_key_valid(key)) {
 		int err;
 

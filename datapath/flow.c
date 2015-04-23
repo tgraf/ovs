@@ -682,6 +682,8 @@ int ovs_flow_key_update(struct sk_buff *skb, struct sw_flow_key *key)
 {
 	int ret;
 
+	printk("state on key update: %u\n", ovs_ct_get_state(skb));
+
 	ret = key_extract(skb, key);
 
 	printk("key updated:\n");
