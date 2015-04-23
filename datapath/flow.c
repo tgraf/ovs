@@ -680,7 +680,16 @@ static int key_extract(struct sk_buff *skb, struct sw_flow_key *key)
 
 int ovs_flow_key_update(struct sk_buff *skb, struct sw_flow_key *key)
 {
-	return key_extract(skb, key);
+	int ret;
+
+	ret = key_extract(skb, key);
+
+	printk("key updated:\n");
+	printk("  conn_state = %u\n", key->conn.state);
+	printk("  conn_zone = %u\n", key->conn.zone);
+	printk("  conn_mark = %u\n", key->conn.mark);
+
+	return ret;
 }
 
 int ovs_flow_key_extract(const struct ovs_tunnel_info *tun_info,
