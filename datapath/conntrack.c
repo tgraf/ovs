@@ -254,6 +254,7 @@ static int ovs_ct_lookup__(struct net *net, const struct sw_flow_key *key,
 	 * different zone. */
 	if (!skb_nfct_cached(net, skb, info)) {
 		struct nf_conn *tmpl = info->ct;
+		int ret;
 
 		/* Associate skb with specified zone. */
 		if (tmpl) {
@@ -263,11 +264,13 @@ static int ovs_ct_lookup__(struct net *net, const struct sw_flow_key *key,
 			skb->nfct = &tmpl->ct_general;
 			skb->nfctinfo = IP_CT_NEW;
 
-			printk("using template state: %u\n", ovs_ct_get_state(skb));
+			printk("pre state: %u\n", ovs_ct_get_state(skb));
 		}
 
-		return nf_conntrack_in(net, info->family, NF_INET_PRE_ROUTING,
-				       skb);
+		ret = nf_conntrack_in(net, info->family, NF_INET_PRE_ROUTING, skb);
+		printk("post state: %u\n", ovs_ct_get_state(skb));
+
+		return ret;
 	}
 
 	return NF_ACCEPT;
