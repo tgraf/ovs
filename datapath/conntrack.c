@@ -252,10 +252,7 @@ static int ovs_ct_lookup__(struct net *net, const struct sw_flow_key *key,
 	 * committing with a separate conntrack action,  then we don't need to
 	 * actually run the packet through conntrack twice unless it's for a
 	 * different zone. */
-	if (!skb_nfct_cached(net, skb, info))
-		printk("nfct cached, doing conntrack anyway\n");
-	
-	if (1) {
+	if (!skb_nfct_cached(net, skb, info)) {
 		struct nf_conn *tmpl = info->ct;
 
 		/* Associate skb with specified zone. */
