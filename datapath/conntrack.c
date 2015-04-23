@@ -271,38 +271,54 @@ static int ovs_ct_lookup__(struct net *net, const struct sw_flow_key *key,
 	return NF_ACCEPT;
 }
 
+static void __ovs_ct_update_key(struct sk_buff *skb, struct sw_flow_key *key,
+				u8 state, u16 zone)
+{
+	key->conn.state = state;
+	key->conn.zone = zone;
+	key->conn.mark = ovs_ct_get_mark(skb);
+	ovs_ct_get_label(skb, &key->conn.label);
+}
+
+static void ovs_ct_update_key(struct sk_buff *skb, struct sw_flow_key *key,
+			      u16 zone)
+{
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+	u8 state;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (ct) {
+		state = ovs_ct_get_state__(ctinfo);
+		zone = nf_ct_zone(ct);
+		if (ct->master) /* XXX */
+			state |= OVS_CS_F_RELATED;
+	} else {
+		state = OVS_CS_F_TRACKED | OVS_CS_F_INVALID;
+	}
+
+	__ovs_ct_update_key(skb, key, state, zone);
+}
+
 /* Lookup connection and read fields into key. */
 static int ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
 			 const struct ovs_conntrack_info *info,
 			 struct sk_buff *skb)
 {
 	struct nf_conntrack_expect *exp;
-	struct nf_conn *ct;
 
 	exp = ovs_ct_expect_find(net, info->zone, info->family, skb);
 	if (exp) {
-		ct = exp->master;
-		key->conn.state = OVS_CS_F_TRACKED | OVS_CS_F_NEW |
-				  OVS_CS_F_RELATED;
-	} else {
-		enum ip_conntrack_info ctinfo;
+		u8 state;
 
+		state = OVS_CS_F_TRACKED | OVS_CS_F_NEW | OVS_CS_F_RELATED;
+		__ovs_ct_update_key(skb, key, state, info->zone);
+	} else {
 		if (ovs_ct_lookup__(net, key, info, skb) != NF_ACCEPT)
 			return -ENOENT;
 
-		ct = nf_ct_get(skb, &ctinfo);
-		if (ct) {
-			key->conn.state = ovs_ct_get_state__(ctinfo);
-			if (ct->master) /* XXX */
-				key->conn.state |= OVS_CS_F_RELATED;
-		} else {
-			key->conn.state = OVS_CS_F_TRACKED | OVS_CS_F_INVALID;
-		}
+		ovs_ct_update_key(skb, key, info->zone);
 	}
-
-	key->conn.zone = ct ? nf_ct_zone(ct) : info->zone;
-	key->conn.mark = ovs_ct_get_mark(skb);
-	ovs_ct_get_label(skb, &key->conn.label);
 
 	if (ovs_ct_helper(skb, info->family) != NF_ACCEPT)
 		return -EINVAL;
@@ -311,7 +327,7 @@ static int ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
 }
 
 /* Lookup connection and confirm if unconfirmed. */
-static int ovs_ct_commit(struct net *net, const struct sw_flow_key *key,
+static int ovs_ct_commit(struct net *net, struct sw_flow_key *key,
 			 const struct ovs_conntrack_info *info,
 			 struct sk_buff *skb)
 {
@@ -331,6 +347,8 @@ static int ovs_ct_commit(struct net *net, const struct sw_flow_key *key,
 		return -EINVAL;
 	if (nf_conntrack_confirm(skb) != NF_ACCEPT)
 		return -EINVAL;
+
+	ovs_ct_update_key(skb, key, info->zone);
 
 	return 0;
 }
