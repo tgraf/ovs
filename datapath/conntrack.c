@@ -332,12 +332,15 @@ static int ovs_ct_commit(struct net *net, struct sw_flow_key *key,
 
 	if (ovs_ct_lookup__(net, key, info, skb) != NF_ACCEPT)
 		return -ENOENT;
+	printk("before helper: %u\n", ovs_ct_get_state(skb));
 	if (ovs_ct_helper(skb, info->family) != NF_ACCEPT)
 		return -EINVAL;
+	printk("before confirm: %u\n", ovs_ct_get_state(skb));
 	if (nf_conntrack_confirm(skb) != NF_ACCEPT)
 		return -EINVAL;
 
 	key->eth.type = htons(0);
+	printk("end of commit: %u\n", ovs_ct_get_state(skb));
 
 	return 0;
 }
