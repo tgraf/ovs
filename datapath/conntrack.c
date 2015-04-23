@@ -262,6 +262,8 @@ static int ovs_ct_lookup__(struct net *net, const struct sw_flow_key *key,
 			nf_conntrack_get(&tmpl->ct_general);
 			skb->nfct = &tmpl->ct_general;
 			skb->nfctinfo = IP_CT_NEW;
+
+			printk("using template state: %u\n", ovs_ct_get_state(skb));
 		}
 
 		return nf_conntrack_in(net, info->family, NF_INET_PRE_ROUTING,
