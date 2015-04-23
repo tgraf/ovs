@@ -311,7 +311,7 @@ static int ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
 }
 
 /* Lookup connection and confirm if unconfirmed. */
-static int ovs_ct_commit(struct net *net, const struct sw_flow_key *key,
+static int ovs_ct_commit(struct net *net, struct sw_flow_key *key,
 			 const struct ovs_conntrack_info *info,
 			 struct sk_buff *skb)
 {
@@ -331,6 +331,8 @@ static int ovs_ct_commit(struct net *net, const struct sw_flow_key *key,
 		return -EINVAL;
 	if (nf_conntrack_confirm(skb) != NF_ACCEPT)
 		return -EINVAL;
+
+	key->eth.type = htons(0);
 
 	return 0;
 }
